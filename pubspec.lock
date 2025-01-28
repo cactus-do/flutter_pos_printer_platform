@@ -105,11 +105,12 @@ packages:
   flutter_star_prnt:
     dependency: "direct main"
     description:
-      name: flutter_star_prnt
-      sha256: d8b8fc16bb15f60365928794bfbb9f529488626132765dabb623aecdc61d0738
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.1"
+      path: "."
+      ref: master
+      resolved-ref: "9be1ce0ad6f3b6e049f61f942c18af1c876065a6"
+      url: "https://github.com/cactus-do/flutter_star_prnt.git"
+    source: git
+    version: "2.4.2"
   flutter_test:
     dependency: "direct dev"
     description: flutter
