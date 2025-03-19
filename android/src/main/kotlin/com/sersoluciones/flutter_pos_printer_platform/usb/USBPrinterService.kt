@@ -68,6 +68,7 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
     }
 
     fun init(reactContext: Context?) {
+        Log.d("USBPrinterService", "init called")
         mContext = reactContext
         mUSBManager = mContext!!.getSystemService(Context.USB_SERVICE) as UsbManager
         mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -263,6 +264,7 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
         private val printLock = Any()
 
         fun getInstance(handler: Handler): USBPrinterService {
+            Log.d("USBPrinterService", "getInstance called")
             if (mInstance == null) {
                 mInstance = USBPrinterService(handler)
             }
