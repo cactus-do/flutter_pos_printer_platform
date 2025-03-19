@@ -61,7 +61,12 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
     fun init(reactContext: Context?) {
         mContext = reactContext
         mUSBManager = mContext!!.getSystemService(Context.USB_SERVICE) as UsbManager
-        mPermissionIndent = PendingIntent.getBroadcast(mContext, 0, Intent(ACTION_USB_PERMISSION), 0)
+        mPermissionIndent = PendingIntent.getBroadcast(
+            mContext,
+            0,
+            Intent(ACTION_USB_PERMISSION),
+            PendingIntent.FLAG_IMMUTABLE
+        )
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         mContext!!.registerReceiver(mUsbDeviceReceiver, filter)
@@ -85,10 +90,14 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
                 Toast.makeText(mContext, "USB Manager is not initialized while trying to get devices list", Toast.LENGTH_LONG).show()
                 return emptyList()
             }
+            for (device in mUSBManager!!.deviceList.values) {
+                Log.d("USBPrinterService", "Detected USB device: vendorId=${device.vendorId}, productId=${device.productId}")
+            }
             return ArrayList(mUSBManager!!.deviceList.values)
         }
 
     fun selectDevice(vendorId: Int, productId: Int): Boolean {
+        Log.v(LOG_TAG, "Request for device: vendor_id: " + vendorId + ", product_id: " + productId)
         if ((mUsbDevice == null) || (mUsbDevice!!.vendorId != vendorId) || (mUsbDevice!!.productId != productId)) {
             synchronized(printLock) {
                 closeConnectionIfExists()

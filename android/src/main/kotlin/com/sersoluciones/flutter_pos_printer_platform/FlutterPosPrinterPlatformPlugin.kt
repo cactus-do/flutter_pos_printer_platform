@@ -190,6 +190,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, EventC
         })
 
         context = flutterPluginBinding.applicationContext
+        Log.d("USBPrinterService", "Initializing USBPrinterService")
         adapter = USBPrinterService.getInstance(usbHandler)
         adapter.init(context)
 
@@ -310,6 +311,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, EventC
     }
 
     private fun getUSBDeviceList(result: Result) {
+        Log.d("USBPrinterService", "getUSBDeviceList called")
         val usbDevices: List<UsbDevice> = adapter.deviceList
         val list = ArrayList<HashMap<*, *>>()
         for (usbDevice in usbDevices) {
@@ -326,6 +328,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, EventC
     }
 
     private fun connectPrinter(vendorId: Int?, productId: Int?, result: Result) {
+        Log.d("USBPrinterService", "connectPrinter called with vendorId=$vendorId, productId=$productId")
         if (vendorId == null || productId == null) return
         if (!adapter.selectDevice(vendorId, productId)) {
             result.success(false)
