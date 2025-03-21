@@ -33,37 +33,39 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                     }
+
+                    if (usbDevice == null) {
+                        Log.e(LOG_TAG, "USB device is null in ACTION_USB_PERMISSION")
+                        return
+                    }
+
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                        if (usbDevice != null) {
-                            Log.i(
-                                LOG_TAG,
-                                "Success get permission for device " + usbDevice.deviceId + ", vendor_id: " + usbDevice.vendorId + " product_id: " + usbDevice.productId
-                            )
-                            mUsbDevice = usbDevice
-                            mHandler.obtainMessage(STATE_USB_CONNECTED).sendToTarget()
-                        } else {
-                            Log.e(LOG_TAG, "USB device is null even though permission was granted")
-                            mHandler.obtainMessage(STATE_USB_NONE).sendToTarget()
-                        }
+                        Log.i(
+                            LOG_TAG,
+                            "Success getting permission for device ${usbDevice.deviceId}, vendor_id: ${usbDevice.vendorId}, product_id: ${usbDevice.productId}"
+                        )
+                        mUsbDevice = usbDevice
+                        mHandler.obtainMessage(STATE_USB_CONNECTED).sendToTarget()
                     } else {
-                        Toast.makeText(context, "User refused to give USB device permission: " + usbDevice!!.deviceName, Toast.LENGTH_LONG)
-                            .show()
+                        Log.e(LOG_TAG, "User refused to grant USB permission for device: ${usbDevice.deviceName}")
+                        Toast.makeText(
+                            context,
+                            "User refused to give USB device permission: ${usbDevice.deviceName}",
+                            Toast.LENGTH_LONG
+                        ).show()
                         mHandler.obtainMessage(STATE_USB_NONE).sendToTarget()
                     }
                 }
-            } else if ((UsbManager.ACTION_USB_DEVICE_DETACHED == action)) {
-
+            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
                 if (mUsbDevice != null) {
+                    Log.i(LOG_TAG, "USB device detached: ${mUsbDevice!!.deviceName}")
                     Toast.makeText(context, "USB device has been turned off", Toast.LENGTH_LONG).show()
                     closeConnectionIfExists()
                     mHandler.obtainMessage(STATE_USB_NONE).sendToTarget()
                 }
-
-            } else if ((UsbManager.ACTION_USB_DEVICE_ATTACHED == action)) {
-//                if (mUsbDevice != null) {
-//                    Toast.makeText(context, "USB device has been turned off", Toast.LENGTH_LONG).show()
-//                    closeConnectionIfExists()
-//                }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+                Log.i(LOG_TAG, "USB device attached")
+                // Handle device attachment if needed
             }
         }
     }
