@@ -27,14 +27,24 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
             val action = intent.action
             if ((ACTION_USB_PERMISSION == action)) {
                 synchronized(this) {
-                    val usbDevice: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                        Log.i(
-                            LOG_TAG,
-                            "Success get permission for device " + usbDevice!!.deviceId + ", vendor_id: " + usbDevice.vendorId + " product_id: " + usbDevice.productId
-                        )
-                        mUsbDevice = usbDevice
-                        mHandler.obtainMessage(STATE_USB_CONNECTED).sendToTarget()
+                        if (usbDevice != null) {
+                            Log.i(
+                                LOG_TAG,
+                                "Success get permission for device " + usbDevice.deviceId + ", vendor_id: " + usbDevice.vendorId + " product_id: " + usbDevice.productId
+                            )
+                            mUsbDevice = usbDevice
+                            mHandler.obtainMessage(STATE_USB_CONNECTED).sendToTarget()
+                        } else {
+                            Log.e(LOG_TAG, "USB device is null even though permission was granted")
+                            mHandler.obtainMessage(STATE_USB_NONE).sendToTarget()
+                        }
                     } else {
                         Toast.makeText(context, "User refused to give USB device permission: " + usbDevice!!.deviceName, Toast.LENGTH_LONG)
                             .show()
