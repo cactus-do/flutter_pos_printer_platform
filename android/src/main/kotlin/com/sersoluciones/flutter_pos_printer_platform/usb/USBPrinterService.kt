@@ -27,7 +27,7 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
             val action = intent.action
             if ((ACTION_USB_PERMISSION == action)) {
                 synchronized(this) {
-                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= 33) { // API level 33 (TIRAMISU)
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                     } else {
                         @Suppress("DEPRECATION")
