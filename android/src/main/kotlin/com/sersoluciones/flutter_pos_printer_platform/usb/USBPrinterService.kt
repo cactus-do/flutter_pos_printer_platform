@@ -11,6 +11,7 @@ import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import android.content.pm.PackageManager
 import java.nio.charset.Charset
 import java.util.*
 
@@ -25,9 +26,13 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
     private val mUsbDeviceReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val action = intent.action
-            if ((ACTION_USB_PERMISSION == action)) {
+            Log.d(LOG_TAG, "Full Intent: $intent")
+            Log.d(LOG_TAG, "onReceive called with action: $action")
+            Log.d(LOG_TAG, "Intent extras: ${intent.extras}")
+            Log.d(LOG_TAG, "Intent get boolean: ${intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)}")
+            if (ACTION_USB_PERMISSION == action) {
                 synchronized(this) {
-                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= 33) { // API level 33 (TIRAMISU)
+                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= 33) {
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                     } else {
                         @Suppress("DEPRECATION")
@@ -35,7 +40,7 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
                     }
 
                     if (usbDevice == null) {
-                        Log.e(LOG_TAG, "USB device is null in ACTION_USB_PERMISSION")
+                        Log.e(LOG_TAG, "USB device is null in USB_PERMISSION")
                         return
                     }
 
@@ -74,19 +79,30 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
         Log.d("USBPrinterService", "init called")
         mContext = reactContext
         mUSBManager = mContext!!.getSystemService(Context.USB_SERVICE) as UsbManager
-        mPermissionIndent = PendingIntent.getBroadcast(
-            mContext,
-            0,
-            Intent(ACTION_USB_PERMISSION),
-            PendingIntent.FLAG_IMMUTABLE
-        )
+        mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            PendingIntent.getBroadcast(
+                mContext,
+                0,
+                Intent(ACTION_USB_PERMISSION),
+                PendingIntent.FLAG_MUTABLE
+            )
+        } else {
+            PendingIntent.getBroadcast(
+                mContext,
+                0,
+                Intent(ACTION_USB_PERMISSION),
+                0
+            )
+        }
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         mContext!!.registerReceiver(mUsbDeviceReceiver, filter)
         Log.v(LOG_TAG, "ESC/POS Printer initialized")
     }
 
     fun closeConnectionIfExists() {
+        Log.d("USBPrinterService", "executing closeConnectionIfExists")
         if (mUsbDeviceConnection != null) {
             mUsbDeviceConnection!!.releaseInterface(mUsbInterface)
             mUsbDeviceConnection!!.close()
@@ -110,20 +126,43 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
         }
 
     fun selectDevice(vendorId: Int, productId: Int): Boolean {
-        Log.v(LOG_TAG, "Request for device: vendor_id: " + vendorId + ", product_id: " + productId)
+        Log.v(LOG_TAG, "Request for device: vendor_id: $vendorId, product_id: $productId")
         if ((mUsbDevice == null) || (mUsbDevice!!.vendorId != vendorId) || (mUsbDevice!!.productId != productId)) {
             synchronized(printLock) {
                 closeConnectionIfExists()
                 val usbDevices: List<UsbDevice> = deviceList
                 for (usbDevice: UsbDevice in usbDevices) {
                     if ((usbDevice.vendorId == vendorId) && (usbDevice.productId == productId)) {
-                        Log.v(LOG_TAG, "Request for device: vendor_id: " + usbDevice.vendorId + ", product_id: " + usbDevice.productId)
-                        closeConnectionIfExists()
+                        Log.v(LOG_TAG, "Found matching device: vendor_id: ${usbDevice.vendorId}, product_id: ${usbDevice.productId}")
+                        Log.v(LOG_TAG, "Has FEATURE_USB_HOST feature?: ${mContext!!.packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)}")
+
+//                        val permissionIntent = Intent(ACTION_USB_PERMISSION).apply {
+//                            putExtra(USBManager.EXTRA_DEVICE, usbDevice) // Asegúrate de incluir el dispositivo USB
+//                            putExtra(USBManager.EXTRA_PERMISSION_GRANTED, false) // El permiso será "false" inicialmente
+//                        }
+//
+//                        mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= 31) {
+//                            PendingIntent.getBroadcast(
+//                                mContext,
+//                                0,
+//                                permissionIntent,
+//                                PendingIntent.FLAG_UPDATE_CURRENT
+//                            )
+//                        } else {
+//                            PendingIntent.getBroadcast(
+//                                mContext,
+//                                0,
+//                                permissionIntent,
+//                                0
+//                            )
+//                        }
+
                         mUSBManager!!.requestPermission(usbDevice, mPermissionIndent)
                         mHandler.obtainMessage(STATE_USB_CONNECTING).sendToTarget()
                         return true
                     }
                 }
+                Log.e(LOG_TAG, "No matching USB device found")
                 return false
             }
         }
@@ -161,13 +200,14 @@ class USBPrinterService private constructor(private val mHandler: Handler) {
                         true
                     } else {
                         usbDeviceConnection.close()
-                        Log.e(LOG_TAG, "Failed to retrieve usb connection")
+                        Log.e(LOG_TAG, "Failed to claim USB interface")
                         false
                     }
                 }
             }
         }
-        return true
+        Log.e(LOG_TAG, "No suitable endpoint found")
+        return false
     }
 
     fun printText(text: String): Boolean {

@@ -331,8 +331,10 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, EventC
         Log.d("USBPrinterService", "connectPrinter called with vendorId=$vendorId, productId=$productId")
         if (vendorId == null || productId == null) return
         if (!adapter.selectDevice(vendorId, productId)) {
+            Log.d("USBPrinterService", "Could not select device: vendorId=$vendorId, productId=$productId")
             result.success(false)
         } else {
+            Log.d("USBPrinterService", "Succesfully selected device: vendorId=$vendorId, productId=$productId")
             result.success(true)
         }
     }
