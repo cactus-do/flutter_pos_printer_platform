@@ -378,8 +378,10 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         if (vendorId == null || productId == null) return
         adapter.setHandler(usbHandler)
         if (!adapter.selectDevice(vendorId, productId)) {
+            Log.d("USBPrinterService", "Could not select device: vendorId=$vendorId, productId=$productId")
             result.success(false)
         } else {
+            Log.d("USBPrinterService", "Succesfully selected device: vendorId=$vendorId, productId=$productId")
             result.success(true)
         }
     }

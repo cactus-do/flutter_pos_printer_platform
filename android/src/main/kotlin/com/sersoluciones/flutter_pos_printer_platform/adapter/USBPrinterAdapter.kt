@@ -88,21 +88,21 @@ class USBPrinterAdapter private constructor() {
         }
 
     fun selectDevice(vendorId: Int, productId: Int): Boolean {
+        Log.v(LOG_TAG, "Request for device: vendor_id: $vendorId, product_id: $productId")
         if ((mUsbDevice == null) || (mUsbDevice!!.vendorId != vendorId) || (mUsbDevice!!.productId != productId)) {
             synchronized(printLock) {
                 closeConnectionIfExists()
                 val usbDevices: List<UsbDevice> = deviceList
                 for (usbDevice: UsbDevice in usbDevices) {
                     if ((usbDevice.vendorId == vendorId) && (usbDevice.productId == productId)) {
-                        Log.v(
-                            LOG_TAG,
-                            "Request for device: vendor_id: " + usbDevice.vendorId + ", product_id: " + usbDevice.productId
-                        )
+                        Log.v(LOG_TAG, "Found matching device: vendor_id: ${usbDevice.vendorId}, product_id: ${usbDevice.productId}")
+                        Log.v(LOG_TAG, "Requesting permission for device: ${usbDevice.deviceName}")
                         closeConnectionIfExists()
                         mUSBManager!!.requestPermission(usbDevice, mPermissionIndent)
                         return true
                     }
                 }
+                Log.e(LOG_TAG, "No matching USB device found")
                 return false
             }
         }
