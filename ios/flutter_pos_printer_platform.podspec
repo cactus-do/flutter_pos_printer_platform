@@ -28,7 +28,7 @@ A new Flutter plugin project.
     :script => <<-SCRIPT
       if [[ "$SDK_NAME" == *"simulator"* ]]; then
         echo "Removing libGSDK.a for iOS Simulator build"
-        rm -f "${BUILT_PRODUCTS_DIR}/libGSDK.a"
+        rm -f "${PODS_TARGET_SRCROOT}/libGSDK.a"
       fi
     SCRIPT
   }
