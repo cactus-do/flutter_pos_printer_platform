@@ -21,7 +21,7 @@ A new Flutter plugin project.
 
   # Import all * .a libraries in the Classes folder
   s.frameworks = ["SystemConfiguration", "CoreTelephony","WebKit"]
-  s.vendored_libraries = '**/*.a'
+  s.vendored_libraries = 'libGSDK.a'
   s.pod_target_xcconfig = {
     'EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]' => 'libGSDK.a'
   }
