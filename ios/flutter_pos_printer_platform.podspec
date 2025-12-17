@@ -22,15 +22,8 @@ A new Flutter plugin project.
   # Import all * .a libraries in the Classes folder
   s.frameworks = ["SystemConfiguration", "CoreTelephony","WebKit"]
   s.vendored_libraries = '**/*.a'
-  s.script_phase = {
-    :name => 'Remove device-only SDK on simulator',
-    :execution_position => :before_compile,
-    :script => <<-SCRIPT
-      if [[ "$SDK_NAME" == *"simulator"* ]]; then
-        echo "Removing libGSDK.a for iOS Simulator build"
-        rm -f "${PODS_TARGET_SRCROOT}/libGSDK.a"
-      fi
-    SCRIPT
+  s.pod_target_xcconfig = {
+    'EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]' => 'libGSDK.a'
   }
 
   # Flutter.framework does not contain a i386 slice.
