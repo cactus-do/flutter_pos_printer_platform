@@ -6,6 +6,11 @@
 @property(nonatomic, retain) FlutterMethodChannel *channel;
 @property(nonatomic, retain) BluetoothPrintStreamHandler *stateStreamHandler;
 @property(nonatomic) NSMutableDictionary *scannedPeripherals;
+
+#if !TARGET_OS_SIMULATOR
+@property(nonatomic, copy) void (^state)(ConnectState state);
+#endif
+
 @end
 
 @implementation FlutterPosPrinterPlatformPlugin
@@ -44,6 +49,7 @@
       NSLog(@"getDevices method -> %@", call.method);
       [self.scannedPeripherals removeAllObjects];
       
+#if !TARGET_OS_SIMULATOR
       if (Manager.bleConnecter == nil) {
           [Manager didUpdateState:^(NSInteger state) {
               switch (state) {
@@ -68,6 +74,7 @@
       } else {
           [self startScan];
       }
+#endif
       
     result(nil);
   } else if([@"stopScan" isEqualToString:call.method]) {
@@ -75,6 +82,7 @@
     result(nil);
   } else if([@"connect" isEqualToString:call.method]) {
     NSDictionary *device = [call arguments];
+#if !TARGET_OS_SIMULATOR
     @try {
       NSLog(@"connect device begin -> %@", [device objectForKey:@"name"]);
       CBPeripheral *peripheral = [_scannedPeripherals objectForKey:[device objectForKey:@"address"]];
@@ -88,6 +96,9 @@
     } @catch(FlutterError *e) {
       result(e);
     }
+#else
+    result(nil);
+#endif
   } else if([@"disconnect" isEqualToString:call.method]) {
     @try {
       [Manager close];
@@ -119,7 +130,8 @@
   }
 }
 
--(void)startScan {
+- (void)startScan {
+#if !TARGET_OS_SIMULATOR
     [Manager scanForPeripheralsWithServices:nil options:nil discover:^(CBPeripheral * _Nullable peripheral, NSDictionary<NSString *,id> * _Nullable advertisementData, NSNumber * _Nullable RSSI) {
         if (peripheral.name != nil) {
             
@@ -130,12 +142,13 @@
             [_channel invokeMethod:@"ScanResult" arguments:device];
         }
     }];
-    
+#endif
 }
 
 -(void)updateConnectState:(ConnectState)state {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSNumber *ret = @0;
+#if !TARGET_OS_SIMULATOR
         switch (state) {
             case CONNECT_STATE_CONNECTING:
                 NSLog(@"status -> %@", @"Connecting ...");
@@ -158,7 +171,7 @@
                 ret = @0;
                 break;
         }
-        
+#endif
          NSDictionary *dict = [NSDictionary dictionaryWithObjectsAndKeys:ret,@"id",nil];
         if(_stateStreamHandler.sink != nil) {
           self.stateStreamHandler.sink([dict objectForKey:@"id"]);

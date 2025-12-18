@@ -4,9 +4,13 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ConnecterBlock.h"
+
+#if !TARGET_OS_SIMULATOR
 #import "BLEConnecter.h"
 #import "EthernetConnecter.h"
 #import "Connecter.h"
+#endif
 
 /**
  *  @enum ConnectMethod
@@ -22,8 +26,10 @@ typedef enum : NSUInteger{
 #define Manager [ConnecterManager sharedInstance]
 
 @interface ConnecterManager : NSObject
+#if !TARGET_OS_SIMULATOR
 @property(nonatomic,strong)BLEConnecter *bleConnecter;
 @property(nonatomic,strong)Connecter *connecter;
+#endif
 
 +(instancetype)sharedInstance;
 
@@ -63,6 +69,7 @@ typedef enum : NSUInteger{
  */
 -(void)didUpdateState:(void(^)(NSInteger state))state;
 
+#if !TARGET_OS_SIMULATOR
 /**
  *  方法说明：连接外设
  *  @param peripheral 需连接的外设
@@ -86,8 +93,7 @@ typedef enum : NSUInteger{
  *  @param discover 发现的设备
  */
 -(void)scanForPeripheralsWithServices:(nullable NSArray<CBUUID *> *)serviceUUIDs options:(nullable NSDictionary<NSString *, id> *)options discover:(void(^_Nullable)(CBPeripheral *_Nullable peripheral,NSDictionary<NSString *, id> *_Nullable advertisementData,NSNumber *_Nullable RSSI))discover;
-
-
+#endif
 
 
 @end
