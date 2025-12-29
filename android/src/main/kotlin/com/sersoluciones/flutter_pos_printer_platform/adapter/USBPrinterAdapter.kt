@@ -36,11 +36,7 @@ class USBPrinterAdapter private constructor() {
         }
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
-            mContext!!.registerReceiver(mUsbDeviceReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            mContext!!.registerReceiver(mUsbDeviceReceiver, filter)
-        }
+        mContext!!.registerReceiver(mUsbDeviceReceiver, filter)
         Log.v(LOG_TAG, "ESC/POS Printer initialized")
     }
 
@@ -50,11 +46,7 @@ class USBPrinterAdapter private constructor() {
             val action = intent.action
             if ((ACTION_USB_PERMISSION == action)) {
                 synchronized(this) {
-                    val usbDevice: UsbDevice? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                    } else {
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                    }
+                    val usbDevice: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         Log.i(
                             LOG_TAG,
