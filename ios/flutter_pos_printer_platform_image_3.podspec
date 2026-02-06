@@ -19,12 +19,8 @@ A new Flutter plugin project.
   s.dependency 'Flutter'
   s.platform = :ios, '9.0'
 
-  # Link the static library ONLY for physical devices
-  s.pod_target_xcconfig = {
-    'DEFINES_MODULE' => 'YES',
-    'OTHER_LDFLAGS[sdk=iphoneos*]' => '-lGSDK',
-    'LIBRARY_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}"'
-  }
+  s.vendored_libraries = 'libGSDK.a'
+  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
 
   s.frameworks = ["SystemConfiguration", "CoreTelephony","WebKit"]
   # Do not use vendored_libraries as it links globally.
