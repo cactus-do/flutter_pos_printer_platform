@@ -7,9 +7,6 @@
 @property(nonatomic, retain) BluetoothPrintStreamHandler *stateStreamHandler;
 @property(nonatomic) NSMutableDictionary *scannedPeripherals;
 
-#if !TARGET_OS_SIMULATOR
-@property(nonatomic, copy) void (^state)(ConnectState state);
-#endif
 
 @end
 

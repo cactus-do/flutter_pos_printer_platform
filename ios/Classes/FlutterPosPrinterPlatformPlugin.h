@@ -4,7 +4,7 @@
 
 #define NAMESPACE @"flutter_pos_printer_platform"
 
-@interface FlutterPosPrinterPlatformPlugin : NSObject<FlutterPlugin, CBCentralManagerDelegate, CBPeripheralDelegate>
+@interface FlutterPosPrinterPlatformPlugin : NSObject<FlutterPlugin>
 @property(nonatomic,copy)ConnectDeviceState state;
 @end
 
