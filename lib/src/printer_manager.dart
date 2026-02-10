@@ -70,6 +70,15 @@ class PrinterManager {
     }
   }
 
+  Future<PrinterInfo> getPrinterInfo({required PrinterType type, BasePrinterInput? model}) async {
+    if (type == PrinterType.network) {
+      return await tcpPrinterConnector.getPrinterInfo(model as TcpPrinterInput);
+    } else if (type == PrinterType.bluetooth && (Platform.isIOS || Platform.isAndroid)) {
+      return await bluetoothPrinterConnector.getPrinterInfo(model as BluetoothPrinterInput);
+    }
+    return PrinterInfo();
+  }
+
   Stream<BTStatus> get stateBluetooth => bluetoothPrinterConnector.currentStatus.cast<BTStatus>();
   Stream<USBStatus> get stateUSB => usbPrinterConnector.currentStatus.cast<USBStatus>();
 

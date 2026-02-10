@@ -146,6 +146,9 @@ class UsbPrinterConnector implements PrinterConnector<UsbPrinterInput> {
     }
   }
 
+  @override
+  Stream<List<int>> get onRead => Stream.empty();
+
   Future<bool> _connect({UsbPrinterInput? model}) async {
     if (Platform.isAndroid) {
       Map<String, dynamic> params = {"vendor": int.parse(model?.vendorId ?? vendorId), "product": int.parse(model?.productId ?? productId)};

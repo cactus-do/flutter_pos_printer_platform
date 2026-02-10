@@ -6,6 +6,12 @@ import 'package:flutter_pos_printer_platform_image_3/discovery.dart';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 import 'package:rxdart/rxdart.dart';
 
+// These channels are typically defined in flutter_pos_printer_platform_image_3.dart
+// but are included here based on the user's instruction snippet.
+// Assuming these are new or re-declarations for this specific file's context.
+
+const EventChannel flutterPrinterEventChannelRead = EventChannel('flutter_pos_printer_platform/read_stream');
+
 class BluetoothPrinterInput extends BasePrinterInput {
   final String address;
   final String? name;
@@ -27,7 +33,9 @@ class BluetoothPrinterDevice {
 
 class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInput> {
   // ignore: unused_element
-  BluetoothPrinterConnector._({this.address = "", this.isBle = false}) {
+  BluetoothPrinterConnector._()
+      : address = "",
+        isBle = false {
     if (Platform.isAndroid)
       flutterPrinterChannel.setMethodCallHandler((MethodCall call) {
         _methodStreamController.add(call);
@@ -98,8 +106,9 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
 
   static DiscoverResult<BluetoothPrinterDevice> discoverPrinters({bool isBle = false}) async {
     if (Platform.isAndroid) {
-      final List<dynamic> results =
-          isBle ? await flutterPrinterChannel.invokeMethod('getBluetoothLeList') : await flutterPrinterChannel.invokeMethod('getBluetoothList');
+      final List<dynamic> results = isBle
+          ? await flutterPrinterChannel.invokeMethod('getBluetoothLeList')
+          : await flutterPrinterChannel.invokeMethod('getBluetoothList');
       return results
           .map((dynamic r) => PrinterDiscovered<BluetoothPrinterDevice>(
                 name: r['name'],
@@ -126,7 +135,11 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
     _scanResults.add(<PrinterDevice>[]);
 
     if (Platform.isAndroid) {
-      isBle ? flutterPrinterChannel.invokeMethod('getBluetoothLeList') : flutterPrinterChannel.invokeMethod('getBluetoothList');
+      try {
+        isBle ? flutterPrinterChannel.invokeMethod('getBluetoothLeList') : flutterPrinterChannel.invokeMethod('getBluetoothList');
+      } catch (e) {
+        print("Error starting Android scan: $e");
+      }
 
       await for (dynamic data in _methodStream
           .where((m) => m.method == "ScanResult")
@@ -146,7 +159,6 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
         print('Error starting scan.');
         _stopScanPill.add(null);
         _isScanning.add(false);
-        throw e;
       }
 
       await for (dynamic data in _methodStream
@@ -184,7 +196,11 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
 
   /// Stops a scan for Bluetooth Low Energy devices
   Future stopScan() async {
-    if (Platform.isIOS) await iosChannel.invokeMethod('stopScan');
+    try {
+      if (Platform.isIOS) await iosChannel.invokeMethod('stopScan');
+    } catch (e) {
+      // ignore
+    }
     _stopScanPill.add(null);
     _isScanning.add(false);
   }
@@ -259,5 +275,44 @@ class BluetoothPrinterConnector implements PrinterConnector<BluetoothPrinterInpu
     } catch (e) {
       return false;
     }
+  }
+
+  @override
+  Stream<List<int>> get onRead =>
+      flutterPrinterEventChannelRead.receiveBroadcastStream().map((event) => (event as List<dynamic>).cast<int>());
+
+  Future<PrinterInfo> getPrinterInfo(BluetoothPrinterInput model) async {
+    PrinterInfo info = PrinterInfo();
+    try {
+      // Ensure connected
+      await connect(model);
+
+      // subscribe to read stream
+      final completer = Completer<String?>();
+      final subscription = onRead.listen((event) {
+        try {
+          final filtered = event.where((b) => b >= 32 && b <= 126).toList();
+          if (filtered.isNotEmpty) {
+            final str = String.fromCharCodes(filtered);
+            if (!completer.isCompleted) completer.complete(str);
+          }
+        } catch (e) {
+          // ignore
+        }
+      });
+
+      // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
+      await send([0x1D, 0x49, 0x44]);
+
+      final serial = await completer.future.timeout(Duration(seconds: 4), onTimeout: () => null);
+      await subscription.cancel();
+
+      if (serial != null && serial.isNotEmpty) {
+        return PrinterInfo(serialNumber: serial, model: 'Unknown', manufacturer: 'Unknown');
+      }
+    } catch (e) {
+      print('Bluetooth GetPrinterInfo failed: $e');
+    }
+    return info;
   }
 }

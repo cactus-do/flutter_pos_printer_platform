@@ -52,6 +52,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
 
     // Declare our eventSink later it will be initialized
     private var eventUSBSink: EventChannel.EventSink? = null
+    private var eventReadSink: EventChannel.EventSink? = null
     private var context: Context? = null
     private var currentActivity: Activity? = null
     private var requestPermissionBT: Boolean = false
@@ -130,9 +131,16 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
                 }
                 BluetoothConstants.MESSAGE_READ -> {
                     val readBuf = msg.obj as ByteArray
-                    var readMessage = String(readBuf, 0, msg.arg1)
-                    readMessage = readMessage.trim { it <= ' ' }
-                    Log.d("bluetooth", "receive bt: $readMessage")
+                    val readLen = msg.arg1
+                    if (readLen > 0) {
+                        val validBuf = readBuf.copyOfRange(0, readLen)
+                        val intList = validBuf.map { it.toInt() }
+                        eventReadSink?.success(intList)
+                        
+                        var readMessage = String(readBuf, 0, readLen)
+                        readMessage = readMessage.trim { it <= ' ' }
+                        Log.d("bluetooth", "receive bt: $readMessage")
+                    }
                 }
                 BluetoothConstants.MESSAGE_DEVICE_NAME -> {
                     val deviceName = msg.data.getString(BluetoothConstants.DEVICE_NAME)
@@ -211,6 +219,17 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
 
             override fun onCancel(p0: Any?) {
                 eventUSBSink = null
+            }
+        })
+
+        val messageReadChannel = EventChannel(binaryMessenger!!, eventChannelRead)
+        messageReadChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
+                eventReadSink = sink
+            }
+
+            override fun onCancel(p0: Any?) {
+                eventReadSink = null
             }
         })
 
@@ -494,6 +513,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Plugin
         const val methodChannel = "com.sersoluciones.flutter_pos_printer_platform"
         const val eventChannelBT = "com.sersoluciones.flutter_pos_printer_platform/bt_state"
         const val eventChannelUSB = "com.sersoluciones.flutter_pos_printer_platform/usb_state"
+        const val eventChannelRead = "flutter_pos_printer_platform/read_stream"
 
     }
 }
