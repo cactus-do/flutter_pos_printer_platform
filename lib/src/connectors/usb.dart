@@ -82,7 +82,7 @@ class UsbPrinterConnector implements PrinterConnector<UsbPrinterInput> {
   setProduct(String productId) => this.productId = productId;
   setName(String name) => this.name = name;
 
-  /// Gets the current state of the Bluetooth module
+  /// Gets the current state of the USB connection
   Stream<USBStatus> get currentStatus async* {
     if (Platform.isAndroid) {
       yield* _statusStream.cast<USBStatus>();

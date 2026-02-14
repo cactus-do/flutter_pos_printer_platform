@@ -4,28 +4,20 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_pos_printer_platform_image_3'
-  s.version          = '0.0.1'
-  s.summary          = 'A new Flutter plugin project.'
+  s.version          = '2.0.0'
+  s.summary          = 'Flutter POS printer platform plugin — USB and TCP/Ethernet support.'
   s.description      = <<-DESC
-A new Flutter plugin project.
+Flutter plugin for POS thermal printers via USB and TCP/Ethernet.
+iOS supports TCP/Ethernet only (pure Dart implementation).
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/cactus-do/flutter_pos_printer_platform'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'Cactus Engineering' => 'eng@cactus.do' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*'
-  s.public_header_files = 'Classes/**/*.h'
-  s.static_framework = true
+  s.source_files = 'Classes/**/*.swift'
   s.dependency 'Flutter'
-  s.platform = :ios, '9.0'
+  s.platform = :ios, '15.0'
+  s.swift_version = '5.0'
 
-  s.vendored_libraries = 'libGSDK.a'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
-
-  s.frameworks = ["SystemConfiguration", "CoreTelephony","WebKit"]
-  # Do not use vendored_libraries as it links globally.
-
-  # Flutter.framework does not contain a i386 slice.
-  # s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
-  # s.swift_version = '5.0'
 end

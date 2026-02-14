@@ -177,10 +177,9 @@ class TcpPrinterConnector implements PrinterConnector<TcpPrinterInput> {
   @override
   Future<bool> send(List<int> bytes) async {
     try {
-      // final _socket = await Socket.connect(_host, _port, timeout: _timeout);
-      _socket?.add(Uint8List.fromList(bytes));
-      await _socket?.flush();
-      _socket?.destroy();
+      if (_socket == null) return false;
+      _socket!.add(Uint8List.fromList(bytes));
+      await _socket!.flush();
       return true;
     } catch (e) {
       return false;
@@ -198,13 +197,18 @@ class TcpPrinterConnector implements PrinterConnector<TcpPrinterInput> {
     }
   }
 
-  /// [delayMs]: milliseconds to wait after destroying the socket
+  /// [delayMs]: milliseconds to wait after closing the socket
   @override
   Future<bool> disconnect({int? delayMs}) async {
-    // _socket.destroy();
-    if (delayMs != null) {
-      await Future.delayed(Duration(milliseconds: delayMs), () => null);
+    try {
+      _socket?.destroy();
+      _socket = null;
+      if (delayMs != null) {
+        await Future.delayed(Duration(milliseconds: delayMs));
+      }
+      return true;
+    } catch (e) {
+      return false;
     }
-    return true;
   }
 }

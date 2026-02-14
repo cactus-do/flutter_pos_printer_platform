@@ -38,7 +38,7 @@
             android:value="2" />
 
         <receiver
-            android:name="com.sersoluciones.flutter_pos_printer_platform.usb.UsbReceiver"
+            android:name="do.cactus.flutter_pos_printer_platform.usb.UsbReceiver"
             android:exported="false">
 
             <intent-filter>

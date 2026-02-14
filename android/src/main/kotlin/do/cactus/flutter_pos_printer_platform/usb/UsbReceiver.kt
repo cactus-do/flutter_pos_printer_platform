@@ -1,4 +1,4 @@
-package com.sersoluciones.flutter_pos_printer_platform.usb
+package do.cactus.flutter_pos_printer_platform.usb
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver

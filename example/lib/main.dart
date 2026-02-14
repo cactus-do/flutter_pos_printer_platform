@@ -17,18 +17,14 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  // Printer Type [bluetooth, usb, network]
-  var defaultPrinterType = PrinterType.bluetooth;
-  var _isBle = false;
-  var _reconnect = false;
+  // Printer Type [usb, network]
+  var defaultPrinterType = PrinterType.network;
   var _isConnected = false;
   var printerManager = PrinterManager.instance;
-  var devices = <BluetoothPrinter>[];
+  var devices = <DiscoveredPrinter>[];
   StreamSubscription<PrinterDevice>? _subscription;
-  StreamSubscription<BTStatus>? _subscriptionBtStatus;
   StreamSubscription<USBStatus>? _subscriptionUsbStatus;
-  BTStatus _currentStatus = BTStatus.none;
-  // _currentUsbStatus is only supports on Android
+  // _currentUsbStatus is only supported on Android
   // ignore: unused_field
   USBStatus _currentUsbStatus = USBStatus.none;
   List<int>? pendingTask;
@@ -36,42 +32,17 @@ class _MyAppState extends State<MyApp> {
   String _port = '9100';
   final _ipController = TextEditingController();
   final _portController = TextEditingController();
-  BluetoothPrinter? selectedPrinter;
+  DiscoveredPrinter? selectedPrinter;
 
   @override
   void initState() {
     if (Platform.isWindows) defaultPrinterType = PrinterType.usb;
+    if (Platform.isAndroid) defaultPrinterType = PrinterType.usb;
     super.initState();
     _portController.text = _port;
     _scan();
 
-    // subscription to listen change status of bluetooth connection
-    _subscriptionBtStatus = PrinterManager.instance.stateBluetooth.listen((status) {
-      log(' ----------------- status bt $status ------------------ ');
-      _currentStatus = status;
-      if (status == BTStatus.connected) {
-        setState(() {
-          _isConnected = true;
-        });
-      }
-      if (status == BTStatus.none) {
-        setState(() {
-          _isConnected = false;
-        });
-      }
-      if (status == BTStatus.connected && pendingTask != null) {
-        if (Platform.isAndroid) {
-          Future.delayed(const Duration(milliseconds: 1000), () {
-            PrinterManager.instance.send(type: PrinterType.bluetooth, bytes: pendingTask!);
-            pendingTask = null;
-          });
-        } else if (Platform.isIOS) {
-          PrinterManager.instance.send(type: PrinterType.bluetooth, bytes: pendingTask!);
-          pendingTask = null;
-        }
-      }
-    });
-    //  PrinterManager.instance.stateUSB is only supports on Android
+    // USB status listener (Android only)
     _subscriptionUsbStatus = PrinterManager.instance.stateUSB.listen((status) {
       log(' ----------------- status usb $status ------------------ ');
       _currentUsbStatus = status;
@@ -89,21 +60,19 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _subscription?.cancel();
-    _subscriptionBtStatus?.cancel();
     _subscriptionUsbStatus?.cancel();
     _portController.dispose();
     _ipController.dispose();
     super.dispose();
   }
 
-  // method to scan devices according PrinterType
+  // Scan for printers based on current PrinterType
   void _scan() {
     devices.clear();
-    _subscription = printerManager.discovery(type: defaultPrinterType, isBle: _isBle).listen((device) {
-      devices.add(BluetoothPrinter(
+    _subscription = printerManager.discovery(type: defaultPrinterType).listen((device) {
+      devices.add(DiscoveredPrinter(
         deviceName: device.name,
         address: device.address,
-        isBle: _isBle,
         vendorId: device.vendorId,
         productId: device.productId,
         typePrinter: defaultPrinterType,
@@ -115,7 +84,7 @@ class _MyAppState extends State<MyApp> {
   void setPort(String value) {
     if (value.isEmpty) value = '9100';
     _port = value;
-    var device = BluetoothPrinter(
+    var device = DiscoveredPrinter(
       deviceName: value,
       address: _ipAddress,
       port: _port,
@@ -127,7 +96,7 @@ class _MyAppState extends State<MyApp> {
 
   void setIpAddress(String value) {
     _ipAddress = value;
-    var device = BluetoothPrinter(
+    var device = DiscoveredPrinter(
       deviceName: value,
       address: _ipAddress,
       port: _port,
@@ -137,9 +106,10 @@ class _MyAppState extends State<MyApp> {
     selectDevice(device);
   }
 
-  void selectDevice(BluetoothPrinter device) async {
+  void selectDevice(DiscoveredPrinter device) async {
     if (selectedPrinter != null) {
-      if ((device.address != selectedPrinter!.address) || (device.typePrinter == PrinterType.usb && selectedPrinter!.vendorId != device.vendorId)) {
+      if ((device.address != selectedPrinter!.address) ||
+          (device.typePrinter == PrinterType.usb && selectedPrinter!.vendorId != device.vendorId)) {
         await PrinterManager.instance.disconnect(type: selectedPrinter!.typePrinter);
       }
     }
@@ -163,50 +133,30 @@ class _MyAppState extends State<MyApp> {
     _printEscPos(bytes, generator);
   }
 
-  /// print ticket
+  /// Print ESC/POS ticket
   void _printEscPos(List<int> bytes, Generator generator) async {
     if (selectedPrinter == null) return;
-    var bluetoothPrinter = selectedPrinter!;
+    var printer = selectedPrinter!;
 
-    switch (bluetoothPrinter.typePrinter) {
+    switch (printer.typePrinter) {
       case PrinterType.usb:
         bytes += generator.feed(2);
         bytes += generator.cut();
         await printerManager.connect(
-            type: bluetoothPrinter.typePrinter,
-            model: UsbPrinterInput(name: bluetoothPrinter.deviceName, productId: bluetoothPrinter.productId, vendorId: bluetoothPrinter.vendorId));
+            type: printer.typePrinter,
+            model: UsbPrinterInput(name: printer.deviceName, productId: printer.productId, vendorId: printer.vendorId));
         pendingTask = null;
-        break;
-      case PrinterType.bluetooth:
-        bytes += generator.cut();
-        await printerManager.connect(
-            type: bluetoothPrinter.typePrinter,
-            model: BluetoothPrinterInput(
-                name: bluetoothPrinter.deviceName,
-                address: bluetoothPrinter.address!,
-                isBle: bluetoothPrinter.isBle ?? false,
-                autoConnect: _reconnect));
-        pendingTask = null;
-        if (Platform.isAndroid) pendingTask = bytes;
         break;
       case PrinterType.network:
         bytes += generator.feed(2);
         bytes += generator.cut();
-        await printerManager.connect(type: bluetoothPrinter.typePrinter, model: TcpPrinterInput(ipAddress: bluetoothPrinter.address!));
+        await printerManager.connect(type: printer.typePrinter, model: TcpPrinterInput(ipAddress: printer.address!));
         break;
-      default:
     }
-    if (bluetoothPrinter.typePrinter == PrinterType.bluetooth && Platform.isAndroid) {
-      if (_currentStatus == BTStatus.connected) {
-        printerManager.send(type: bluetoothPrinter.typePrinter, bytes: bytes);
-        pendingTask = null;
-      }
-    } else {
-      printerManager.send(type: bluetoothPrinter.typePrinter, bytes: bytes);
-    }
+    printerManager.send(type: printer.typePrinter, bytes: bytes);
   }
 
-  // conectar dispositivo
+  // Connect to selected device
   _connectDevice() async {
     _isConnected = false;
     if (selectedPrinter == null) return;
@@ -214,23 +164,14 @@ class _MyAppState extends State<MyApp> {
       case PrinterType.usb:
         await printerManager.connect(
             type: selectedPrinter!.typePrinter,
-            model: UsbPrinterInput(name: selectedPrinter!.deviceName, productId: selectedPrinter!.productId, vendorId: selectedPrinter!.vendorId));
+            model: UsbPrinterInput(
+                name: selectedPrinter!.deviceName, productId: selectedPrinter!.productId, vendorId: selectedPrinter!.vendorId));
         _isConnected = true;
-        break;
-      case PrinterType.bluetooth:
-        await printerManager.connect(
-            type: selectedPrinter!.typePrinter,
-            model: BluetoothPrinterInput(
-                name: selectedPrinter!.deviceName,
-                address: selectedPrinter!.address!,
-                isBle: selectedPrinter!.isBle ?? false,
-                autoConnect: _reconnect));
         break;
       case PrinterType.network:
         await printerManager.connect(type: selectedPrinter!.typePrinter, model: TcpPrinterInput(ipAddress: selectedPrinter!.address!));
         _isConnected = true;
         break;
-      default:
     }
 
     setState(() {});
@@ -241,7 +182,7 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(
-          title: const Text('Flutter Pos Plugin Platform example app'),
+          title: const Text('Flutter POS Printer — USB & Network'),
         ),
         body: Center(
           child: Container(
@@ -271,7 +212,9 @@ class _MyAppState extends State<MyApp> {
                             onPressed: selectedPrinter == null || !_isConnected
                                 ? null
                                 : () {
-                                    if (selectedPrinter != null) printerManager.disconnect(type: selectedPrinter!.typePrinter);
+                                    if (selectedPrinter != null) {
+                                      printerManager.disconnect(type: selectedPrinter!.typePrinter);
+                                    }
                                     setState(() {
                                       _isConnected = false;
                                     });
@@ -283,31 +226,26 @@ class _MyAppState extends State<MyApp> {
                     ),
                   ),
                   DropdownButtonFormField<PrinterType>(
-                    value: defaultPrinterType,
+                    initialValue: defaultPrinterType,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(
                         Icons.print,
                         size: 24,
                       ),
-                      labelText: "Type Printer Device",
+                      labelText: "Printer Connection Type",
                       labelStyle: TextStyle(fontSize: 18.0),
                       focusedBorder: InputBorder.none,
                       enabledBorder: InputBorder.none,
                     ),
                     items: <DropdownMenuItem<PrinterType>>[
-                      if (Platform.isAndroid || Platform.isIOS)
-                        const DropdownMenuItem(
-                          value: PrinterType.bluetooth,
-                          child: Text("bluetooth"),
-                        ),
                       if (Platform.isAndroid || Platform.isWindows)
                         const DropdownMenuItem(
                           value: PrinterType.usb,
-                          child: Text("usb"),
+                          child: Text("USB"),
                         ),
                       const DropdownMenuItem(
                         value: PrinterType.network,
-                        child: Text("Wifi"),
+                        child: Text("Network / Ethernet"),
                       ),
                     ],
                     onChanged: (PrinterType? value) {
@@ -316,50 +254,12 @@ class _MyAppState extends State<MyApp> {
                           setState(() {
                             defaultPrinterType = value;
                             selectedPrinter = null;
-                            _isBle = false;
                             _isConnected = false;
                             _scan();
                           });
                         }
                       });
                     },
-                  ),
-                  Visibility(
-                    visible: defaultPrinterType == PrinterType.bluetooth && Platform.isAndroid,
-                    child: SwitchListTile.adaptive(
-                      contentPadding: const EdgeInsets.only(bottom: 20.0, left: 20),
-                      title: const Text(
-                        "This device supports ble (low energy)",
-                        textAlign: TextAlign.start,
-                        style: TextStyle(fontSize: 19.0),
-                      ),
-                      value: _isBle,
-                      onChanged: (bool? value) {
-                        setState(() {
-                          _isBle = value ?? false;
-                          _isConnected = false;
-                          selectedPrinter = null;
-                          _scan();
-                        });
-                      },
-                    ),
-                  ),
-                  Visibility(
-                    visible: defaultPrinterType == PrinterType.bluetooth && Platform.isAndroid,
-                    child: SwitchListTile.adaptive(
-                      contentPadding: const EdgeInsets.only(bottom: 20.0, left: 20),
-                      title: const Text(
-                        "reconnect",
-                        textAlign: TextAlign.start,
-                        style: TextStyle(fontSize: 19.0),
-                      ),
-                      value: _reconnect,
-                      onChanged: (bool? value) {
-                        setState(() {
-                          _reconnect = value ?? false;
-                        });
-                      },
-                    ),
                   ),
                   Column(
                       children: devices
@@ -370,7 +270,6 @@ class _MyAppState extends State<MyApp> {
                                   ? null
                                   : Visibility(visible: !Platform.isWindows, child: Text("${device.address}")),
                               onTap: () {
-                                // do something
                                 selectDevice(device);
                               },
                               leading: selectedPrinter != null &&
@@ -398,14 +297,14 @@ class _MyAppState extends State<MyApp> {
                           )
                           .toList()),
                   Visibility(
-                    visible: defaultPrinterType == PrinterType.network && Platform.isWindows,
+                    visible: defaultPrinterType == PrinterType.network,
                     child: Padding(
                       padding: const EdgeInsets.only(top: 10.0),
                       child: TextFormField(
                         controller: _ipController,
                         keyboardType: const TextInputType.numberWithOptions(signed: true),
                         decoration: const InputDecoration(
-                          label: Text("Ip Address"),
+                          label: Text("IP Address"),
                           prefixIcon: Icon(Icons.wifi, size: 24),
                         ),
                         onChanged: setIpAddress,
@@ -413,7 +312,7 @@ class _MyAppState extends State<MyApp> {
                     ),
                   ),
                   Visibility(
-                    visible: defaultPrinterType == PrinterType.network && Platform.isWindows,
+                    visible: defaultPrinterType == PrinterType.network,
                     child: Padding(
                       padding: const EdgeInsets.only(top: 10.0),
                       child: TextFormField(
@@ -428,7 +327,7 @@ class _MyAppState extends State<MyApp> {
                     ),
                   ),
                   Visibility(
-                    visible: defaultPrinterType == PrinterType.network && Platform.isWindows,
+                    visible: defaultPrinterType == PrinterType.network,
                     child: Padding(
                       padding: const EdgeInsets.only(top: 10.0),
                       child: OutlinedButton(
@@ -453,25 +352,17 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
-class BluetoothPrinter {
+class DiscoveredPrinter {
   int? id;
   String? deviceName;
   String? address;
   String? port;
   String? vendorId;
   String? productId;
-  bool? isBle;
 
   PrinterType typePrinter;
   bool? state;
 
-  BluetoothPrinter(
-      {this.deviceName,
-      this.address,
-      this.port,
-      this.state,
-      this.vendorId,
-      this.productId,
-      this.typePrinter = PrinterType.bluetooth,
-      this.isBle = false});
+  DiscoveredPrinter(
+      {this.deviceName, this.address, this.port, this.state, this.vendorId, this.productId, this.typePrinter = PrinterType.usb});
 }

@@ -1,4 +1,4 @@
-package com.sersoluciones.flutter_pos_printer_platform.adapter
+package do.cactus.flutter_pos_printer_platform.adapter
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -9,8 +9,8 @@ import android.hardware.usb.*
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import com.sersoluciones.flutter_pos_printer_platform.R
-import com.sersoluciones.flutter_pos_printer_platform.usb.USBPrinterService
+import do.cactus.flutter_pos_printer_platform.R
+import do.cactus.flutter_pos_printer_platform.usb.USBPrinterService
 import java.nio.charset.Charset
 import java.util.*
 
