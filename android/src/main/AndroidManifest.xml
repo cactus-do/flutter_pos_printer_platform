@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="do.cactus.flutter_pos_printer_platform">
+  package="com.cactus.flutter_pos_printer_platform">
 
     <uses-permission android:name="android.permission.USB_PERMISSION"/>
 </manifest>

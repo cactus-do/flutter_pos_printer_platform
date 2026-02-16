@@ -1,4 +1,4 @@
-package do.cactus.flutter_pos_printer_platform.usb
+package com.cactus.flutter_pos_printer_platform.usb
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -11,7 +11,7 @@ import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import do.cactus.flutter_pos_printer_platform.R
+import com.cactus.flutter_pos_printer_platform.R
 import java.nio.charset.Charset
 import java.util.*
 

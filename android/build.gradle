@@ -1,4 +1,4 @@
-group 'do.cactus.flutter_pos_printer_platform'
+group 'com.cactus.flutter_pos_printer_platform'
 version '2.0-SNAPSHOT'
 
 buildscript {
@@ -24,7 +24,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    namespace 'do.cactus.flutter_pos_printer_platform'
+    namespace 'com.cactus.flutter_pos_printer_platform'
     compileSdk 34
 
     compileOptions {

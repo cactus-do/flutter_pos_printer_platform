@@ -1,4 +1,4 @@
-package do.cactus.flutter_pos_printer_platform
+package com.cactus.flutter_pos_printer_platform
 
 import android.app.Activity
 import android.content.Context
@@ -8,7 +8,7 @@ import android.os.Looper
 import android.os.Message
 import android.util.Log
 import androidx.annotation.NonNull
-import do.cactus.flutter_pos_printer_platform.usb.USBPrinterService
+import com.cactus.flutter_pos_printer_platform.usb.USBPrinterService
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -191,7 +191,7 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
     }
 
     companion object {
-        const val METHOD_CHANNEL = "do.cactus.flutter_pos_printer_platform"
-        const val EVENT_CHANNEL_USB = "do.cactus.flutter_pos_printer_platform/usb_state"
+        const val METHOD_CHANNEL = "com.cactus.flutter_pos_printer_platform"
+        const val EVENT_CHANNEL_USB = "com.cactus.flutter_pos_printer_platform/usb_state"
     }
 }

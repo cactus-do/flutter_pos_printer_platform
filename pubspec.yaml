@@ -25,7 +25,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: do.cactus.flutter_pos_printer_platform
+        package: com.cactus.flutter_pos_printer_platform
         pluginClass: FlutterPosPrinterPlatformPlugin
       ios:
         pluginClass: FlutterPosPrinterPlatformPlugin

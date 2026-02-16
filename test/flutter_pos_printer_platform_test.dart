@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const MethodChannel channel = MethodChannel('flutter_pos_printer');
+  const MethodChannel channel = MethodChannel('com.cactus.flutter_pos_printer_platform');
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
