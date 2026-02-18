@@ -1,0 +1,53 @@
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'method_channel_flutter_pos_printer.dart';
+import '../enums.dart'; // for USBStatus
+
+abstract class FlutterPosPrinterPlatform extends PlatformInterface {
+  /// Constructs a FlutterPosPrinterPlatform.
+  FlutterPosPrinterPlatform() : super(token: _token);
+
+  static final Object _token = Object();
+
+  static FlutterPosPrinterPlatform _instance = MethodChannelFlutterPosPrinter();
+
+  /// The default instance of [FlutterPosPrinterPlatform] to use.
+  ///
+  /// Defaults to [MethodChannelFlutterPosPrinter].
+  static FlutterPosPrinterPlatform get instance => _instance;
+
+  /// Platform-specific implementations should set this with their own
+  /// platform-specific class that extends [FlutterPosPrinterPlatform] when
+  /// they register themselves.
+  static set instance(FlutterPosPrinterPlatform instance) {
+    PlatformInterface.verifyToken(instance, _token);
+    _instance = instance;
+  }
+
+  /// Discover available USB devices.
+  Future<List<dynamic>> getDeviceList() {
+    throw UnimplementedError('getDeviceList() has not been implemented.');
+  }
+
+  /// Connect to a USB printer.
+  ///
+  /// [vendorId] and [productId] are required for Android.
+  /// [name] is required for Windows.
+  Future<bool> connect({String? name, String? vendorId, String? productId}) {
+    throw UnimplementedError('connect() has not been implemented.');
+  }
+
+  /// Disconnect from the current USB printer.
+  Future<bool> disconnect() {
+    throw UnimplementedError('disconnect() has not been implemented.');
+  }
+
+  /// Write data to the connected USB printer.
+  Future<bool> write(List<int> bytes) {
+    throw UnimplementedError('write() has not been implemented.');
+  }
+
+  /// Stream of USB connection status.
+  Stream<USBStatus> get state {
+    throw UnimplementedError('state has not been implemented.');
+  }
+}

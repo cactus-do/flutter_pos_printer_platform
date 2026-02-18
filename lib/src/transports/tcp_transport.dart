@@ -1,0 +1,245 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'printer_transport.dart';
+import 'package:dart_snmp/dart_snmp.dart';
+import 'package:flutter_pos_printer_platform_image_3/src/enums.dart';
+import 'package:network_info_plus/network_info_plus.dart';
+import '../utils/network_analyzer.dart';
+import '../models/printer_device.dart';
+import '../printer_info.dart';
+
+class TcpTransport extends PrinterTransport {
+  final String ipAddress;
+  final int port;
+  final Duration timeout;
+
+  Socket? _socket;
+  final StreamController<PosPrinterConnectionState> _stateController = StreamController.broadcast();
+  final StreamController<PrinterStatus> _statusController = StreamController.broadcast();
+  Timer? _heartbeatTimer;
+
+  TcpTransport({
+    required this.ipAddress,
+    this.port = 9100,
+    this.timeout = const Duration(seconds: 5),
+  }) {
+    _stateController.add(PosPrinterConnectionState.disconnected);
+    _statusController.add(PrinterStatus.unknown);
+  }
+
+  @override
+  Stream<PosPrinterConnectionState> get state => _stateController.stream;
+
+  @override
+  Stream<PrinterStatus> get status => _statusController.stream;
+
+  @override
+  Future<bool> connect() async {
+    if (_socket != null) return true; // Already connected
+
+    try {
+      _stateController.add(PosPrinterConnectionState.connecting);
+      _socket = await Socket.connect(ipAddress, port, timeout: timeout);
+      _stateController.add(PosPrinterConnectionState.connected);
+      _statusController.add(PrinterStatus.good);
+
+      // Listen for data (status responses) and closure
+      _socket!.listen(
+        (data) {
+          _parseStatus(data);
+        },
+        onDone: () {
+          _disconnectCleanup();
+        },
+        onError: (e) {
+          _disconnectCleanup();
+        },
+      );
+
+      _startHeartbeat();
+      return true;
+    } catch (e) {
+      _disconnectCleanup();
+      return false;
+    }
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(Duration(seconds: 3), (timer) {
+      if (_socket == null) {
+        timer.cancel();
+        return;
+      }
+      // Send DLE EOT 4 (Real-time status transmission: Paper sensor)
+      // 0x10 0x04 0x04
+      try {
+        _socket!.add(Uint8List.fromList([0x10, 0x04, 0x04]));
+        // If flush fails, it might throw, triggering disconnect in the future?
+        // Socket.add is non-blocking usually.
+      } catch (e) {
+        _disconnectCleanup();
+      }
+    });
+  }
+
+  void _parseStatus(Uint8List data) {
+    if (data.isEmpty) return;
+    // DLE EOT 4 response is 1 byte.
+    // We might receive other data if we add read support later.
+    // For now, assume single byte status if length is 1.
+    for (final byte in data) {
+      // Check for paper end
+      // Bit 5 and 6 = 1 means Paper End.
+      // 0x60 mask.
+      // If (byte & 0x60) == 0x60 -> Paper Empty
+      // If (byte & 0x0C) == 0x0C -> Paper Near End
+
+      // Standard ESC/POS Status (n=4):
+      // Bit 0: Fixed 0
+      // Bit 1: Fixed 1
+      // Bit 2,3: Paper roll near-end sensor: 00=Paper adequate, 11=Paper near end
+      // Bit 4: Fixed 0
+      // Bit 5,6: Paper roll end sensor: 00=Paper present, 11=Paper end
+      // Bit 7: Fixed 0
+
+      // So byte should look like 0xx0xxxx (binary)
+
+      if ((byte & 0x60) == 0x60) {
+        _statusController.add(PrinterStatus.paperOut);
+      } else if ((byte & 0x0C) == 0x0C) {
+        _statusController.add(PrinterStatus.paperLow);
+      } else {
+        _statusController.add(PrinterStatus.good);
+      }
+    }
+  }
+
+  @override
+  Future<bool> disconnect() async {
+    await _disconnectCleanup();
+    return true;
+  }
+
+  Future<void> _disconnectCleanup() async {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+
+    if (_socket != null) {
+      await _socket!.close();
+      _socket!.destroy();
+      _socket = null;
+    }
+    _stateController.add(PosPrinterConnectionState.disconnected);
+    _statusController.add(PrinterStatus.unknown);
+  }
+
+  @override
+  Future<bool> write(List<int> bytes) async {
+    if (_socket == null) {
+      final connected = await connect();
+      if (!connected) return false;
+    }
+
+    try {
+      _socket!.add(Uint8List.fromList(bytes));
+      await _socket!.flush();
+      return true;
+    } catch (e) {
+      await _disconnectCleanup();
+      return false;
+    }
+  }
+
+  /// Starts a scan for network printers.
+  static Stream<PrinterDevice> discovery({String? ipAddress, int port = 9100}) async* {
+    print("Starting network discovery (TCP) on port $port");
+
+    String? deviceIp;
+    if (Platform.isAndroid || Platform.isIOS) {
+      deviceIp = await NetworkInfo().getWifiIP();
+      print("Device IP obtained: $deviceIp");
+    } else if (ipAddress != null) {
+      deviceIp = ipAddress;
+    } else {
+      print("No IP address found for discovery.");
+      return;
+    }
+
+    if (deviceIp == null) {
+      print("Device IP is null, aborting discovery.");
+      return;
+    }
+
+    final String subnet = deviceIp.substring(0, deviceIp.lastIndexOf('.'));
+    print("Scanning subnet: $subnet");
+
+    final stream = NetworkAnalyzer.discover(subnet, port);
+
+    await for (var data in stream) {
+      if (data.exists) {
+        print("Found device at ${data.ip}");
+        yield PrinterDevice(name: "${data.ip}:$port", address: data.ip);
+      }
+    }
+    print("Network discovery finished.");
+  }
+
+  static Future<PrinterInfo> getPrinterInfo({required String ipAddress, int port = 9100}) async {
+    PrinterInfo info = PrinterInfo();
+    // Strategy A: ESC/POS (Port 9100)
+    try {
+      final socket = await Socket.connect(ipAddress, port, timeout: Duration(seconds: 2));
+      // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
+      socket.add([0x1D, 0x49, 0x44]);
+
+      final completer = Completer<String?>();
+      final subscription = socket.listen((data) {
+        try {
+          final filtered = data.where((b) => b >= 32 && b <= 126).toList();
+          if (filtered.isNotEmpty) {
+            final str = String.fromCharCodes(filtered);
+            if (!completer.isCompleted) completer.complete(str);
+          }
+        } catch (e) {
+          if (!completer.isCompleted) completer.complete(null);
+        }
+      });
+
+      final serial = await completer.future.timeout(Duration(seconds: 2), onTimeout: () => null);
+      await subscription.cancel();
+      socket.destroy();
+
+      if (serial != null && serial.isNotEmpty) {
+        return PrinterInfo(serialNumber: serial, model: 'Unknown', manufacturer: 'Unknown');
+      }
+    } catch (e) {
+      print('ESC/POS Query failed: $e');
+    }
+
+    // Strategy B: SNMP (Fallback)
+    try {
+      final target = InternetAddress(ipAddress);
+      final session = await Snmp.createSession(target);
+      final oid = Oid.fromString('1.3.6.1.2.1.43.5.1.1.17.1'); // prtGeneralSerialNumber
+      final message = await session.get(oid);
+
+      if (message.pdu.varbinds.isNotEmpty) {
+        final serial = message.pdu.varbinds.first.value.toString();
+        if (serial.isNotEmpty) {
+          return PrinterInfo(
+            serialNumber: serial,
+            model: 'Unknown',
+            manufacturer: 'Unknown',
+          );
+        }
+      }
+      session.close();
+    } catch (e) {
+      print('SNMP Query failed: $e');
+    }
+
+    return info;
+  }
+}

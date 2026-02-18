@@ -1,3 +1,10 @@
+## 2.0.1
+
+* Update `image` dependency to v4.
+* Replace `ping_discover_network_forked` with custom network scanner.
+* Add reliable heartbeat mechanism for printer connection status.
+* Fix build issues and modernize codebase.
+
 ## 1.2.4
 
 * Relax rxdart version to allow library usage in FlutterFlow app builder

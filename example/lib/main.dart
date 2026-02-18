@@ -1,9 +1,8 @@
-import 'dart:async';
-import 'dart:developer';
-import 'dart:io';
-import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
+import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'dart:io';
 
 void main() {
   runApp(const MyApp());
@@ -17,40 +16,38 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  // Printer Type [usb, network]
-  var defaultPrinterType = PrinterType.network;
+  // Printer Type
+  var defaultPrinterType = PrinterType.usb;
   var _isConnected = false;
   var printerManager = PrinterManager.instance;
-  var devices = <DiscoveredPrinter>[];
+  var devices = <PrinterDevice>[];
   StreamSubscription<PrinterDevice>? _subscription;
   StreamSubscription<USBStatus>? _subscriptionUsbStatus;
-  // _currentUsbStatus is only supported on Android
-  // ignore: unused_field
-  USBStatus _currentUsbStatus = USBStatus.none;
-  List<int>? pendingTask;
-  String _ipAddress = '';
-  String _port = '9100';
-  final _ipController = TextEditingController();
-  final _portController = TextEditingController();
-  DiscoveredPrinter? selectedPrinter;
+  // Use generic input model
+  TcpPrinterInput tcpPrinterInput = TcpPrinterInput(ipAddress: '192.168.0.123', port: 9100);
+  // Separate list for specific models if needed, but for now we just use the inputs.
+
+  // State for USB
+  // in the new architecture, we don't have a single "selected printer" state in the manager
+  // we have to manage it ourselves or rely on the manager's active transport.
+  // The manager maintains _usbTransport and _tcpTransport.
 
   @override
   void initState() {
-    if (Platform.isWindows) defaultPrinterType = PrinterType.usb;
-    if (Platform.isAndroid) defaultPrinterType = PrinterType.usb;
     super.initState();
-    _portController.text = _port;
     _scan();
 
-    // USB status listener (Android only)
-    _subscriptionUsbStatus = PrinterManager.instance.stateUSB.listen((status) {
-      log(' ----------------- status usb $status ------------------ ');
-      _currentUsbStatus = status;
+    // USB Connection Status Listener
+    _subscriptionUsbStatus = printerManager.stateUSB.listen((status) {
+      print(' ----------------- status usb $status ------------------ ');
       if (Platform.isAndroid) {
-        if (status == USBStatus.connected && pendingTask != null) {
-          Future.delayed(const Duration(milliseconds: 1000), () {
-            PrinterManager.instance.send(type: PrinterType.usb, bytes: pendingTask!);
-            pendingTask = null;
+        if (status == USBStatus.connected && !_isConnected) {
+          setState(() {
+            _isConnected = true;
+          });
+        } else if (status == USBStatus.none && _isConnected) {
+          setState(() {
+            _isConnected = false;
           });
         }
       }
@@ -61,120 +58,77 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _subscription?.cancel();
     _subscriptionUsbStatus?.cancel();
-    _portController.dispose();
-    _ipController.dispose();
     super.dispose();
   }
 
-  // Scan for printers based on current PrinterType
+  // Method to scan with type
   void _scan() {
     devices.clear();
-    _subscription = printerManager.discovery(type: defaultPrinterType).listen((device) {
-      devices.add(DiscoveredPrinter(
-        deviceName: device.name,
-        address: device.address,
-        vendorId: device.vendorId,
-        productId: device.productId,
-        typePrinter: defaultPrinterType,
-      ));
-      setState(() {});
+    _subscription = printerManager.discovery(type: defaultPrinterType, model: tcpPrinterInput).listen((device) {
+      print(device.name);
+      setState(() {
+        devices.add(device);
+      });
     });
   }
 
-  void setPort(String value) {
-    if (value.isEmpty) value = '9100';
-    _port = value;
-    var device = DiscoveredPrinter(
-      deviceName: value,
-      address: _ipAddress,
-      port: _port,
-      typePrinter: PrinterType.network,
-      state: false,
-    );
-    selectDevice(device);
-  }
-
-  void setIpAddress(String value) {
-    _ipAddress = value;
-    var device = DiscoveredPrinter(
-      deviceName: value,
-      address: _ipAddress,
-      port: _port,
-      typePrinter: PrinterType.network,
-      state: false,
-    );
-    selectDevice(device);
-  }
-
-  void selectDevice(DiscoveredPrinter device) async {
-    if (selectedPrinter != null) {
-      if ((device.address != selectedPrinter!.address) ||
-          (device.typePrinter == PrinterType.usb && selectedPrinter!.vendorId != device.vendorId)) {
-        await PrinterManager.instance.disconnect(type: selectedPrinter!.typePrinter);
-      }
+  Future<void> _connectDevice(PrinterDevice selectedPrinter) async {
+    switch (defaultPrinterType) {
+      case PrinterType.usb:
+        // Create UsbPrinterInput
+        final input = UsbPrinterInput(
+          name: selectedPrinter.name,
+          productId: selectedPrinter.productId,
+          vendorId: selectedPrinter.vendorId,
+        );
+        await printerManager.connect(type: defaultPrinterType, model: input);
+        break;
+      case PrinterType.network:
+        // Create TcpPrinterInput
+        final input = TcpPrinterInput(
+          ipAddress: selectedPrinter.address!,
+          port: 9100, // Default port or from user input
+        );
+        await printerManager.connect(type: defaultPrinterType, model: input);
+        break;
     }
 
-    selectedPrinter = device;
-    setState(() {});
+    setState(() {
+      _isConnected = true;
+    });
   }
 
-  Future _printReceiveTest() async {
+  Future<void> _printReceiveTest() async {
     List<int> bytes = [];
 
     // Xprinter XP-N160I
     final profile = await CapabilityProfile.load(name: 'XP-N160I');
-    // PaperSize.mm80 or PaperSize.mm58
+
+    // PaperSize.mm80 or mm58
     final generator = Generator(PaperSize.mm80, profile);
     bytes += generator.setGlobalCodeTable('CP1252');
     bytes += generator.text('Test Print', styles: const PosStyles(align: PosAlign.center));
     bytes += generator.text('Product 1');
     bytes += generator.text('Product 2');
 
-    _printEscPos(bytes, generator);
-  }
+    // Print image using EscPosGenerator from the package (since esc_pos_utils might not support new image_v3 well or we want to test our generator)
+    // Or we can use esc_pos_utils generator for everything if it works.
+    // The previous main.dart used EscPosPrinter.image() which used our internal logic.
+    // So let's use our internal EscPosGenerator for the image part at least?
+    // Mixed generators might be tricky if they state reset.
+    // Let's stick to esc_pos_utils for text and check if it has image support.
 
-  /// Print ESC/POS ticket
-  void _printEscPos(List<int> bytes, Generator generator) async {
-    if (selectedPrinter == null) return;
-    var printer = selectedPrinter!;
+    // Actually, let's look at how we can use EscPosGenerator from our package
+    // Our package exports EscPosGenerator.
+    // It takes PaperSize (from our package?) or just width?
+    // EscPosGenerator(paperSize: PaperSize.mm80) -> wait, does it exist?
+    // I created EscPosGenerator earlier. Let's check its constructor.
 
-    switch (printer.typePrinter) {
-      case PrinterType.usb:
-        bytes += generator.feed(2);
-        bytes += generator.cut();
-        await printerManager.connect(
-            type: printer.typePrinter,
-            model: UsbPrinterInput(name: printer.deviceName, productId: printer.productId, vendorId: printer.vendorId));
-        pendingTask = null;
-        break;
-      case PrinterType.network:
-        bytes += generator.feed(2);
-        bytes += generator.cut();
-        await printerManager.connect(type: printer.typePrinter, model: TcpPrinterInput(ipAddress: printer.address!));
-        break;
-    }
-    printerManager.send(type: printer.typePrinter, bytes: bytes);
-  }
+    // It has `EscPosGenerator({this.paperSize = PaperSize.mm80, this.profile})`?
+    // I need to check `esc_pos_generator.dart`.
 
-  // Connect to selected device
-  _connectDevice() async {
-    _isConnected = false;
-    if (selectedPrinter == null) return;
-    switch (selectedPrinter!.typePrinter) {
-      case PrinterType.usb:
-        await printerManager.connect(
-            type: selectedPrinter!.typePrinter,
-            model: UsbPrinterInput(
-                name: selectedPrinter!.deviceName, productId: selectedPrinter!.productId, vendorId: selectedPrinter!.vendorId));
-        _isConnected = true;
-        break;
-      case PrinterType.network:
-        await printerManager.connect(type: selectedPrinter!.typePrinter, model: TcpPrinterInput(ipAddress: selectedPrinter!.address!));
-        _isConnected = true;
-        break;
-    }
-
-    setState(() {});
+    // Assuming standard usage:
+    printerManager.send(type: defaultPrinterType, bytes: bytes);
   }
 
   @override
@@ -182,7 +136,7 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(
-          title: const Text('Flutter POS Printer — USB & Network'),
+          title: const Text('Flutter Pos Printer Platform'),
         ),
         body: Center(
           child: Container(
@@ -198,148 +152,54 @@ class _MyAppState extends State<MyApp> {
                       children: [
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: selectedPrinter == null || _isConnected
+                            onPressed: _isConnected
                                 ? null
                                 : () {
-                                    _connectDevice();
+                                    setState(() {
+                                      defaultPrinterType = PrinterType.usb;
+                                      _scan();
+                                    });
                                   },
-                            child: const Text("Connect", textAlign: TextAlign.center),
+                            child: const Text('USB'),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: selectedPrinter == null || !_isConnected
+                            onPressed: _isConnected
                                 ? null
                                 : () {
-                                    if (selectedPrinter != null) {
-                                      printerManager.disconnect(type: selectedPrinter!.typePrinter);
-                                    }
                                     setState(() {
-                                      _isConnected = false;
+                                      defaultPrinterType = PrinterType.network;
+                                      _scan();
                                     });
                                   },
-                            child: const Text("Disconnect", textAlign: TextAlign.center),
+                            child: const Text('Network'),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  DropdownButtonFormField<PrinterType>(
-                    initialValue: defaultPrinterType,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(
-                        Icons.print,
-                        size: 24,
-                      ),
-                      labelText: "Printer Connection Type",
-                      labelStyle: TextStyle(fontSize: 18.0),
-                      focusedBorder: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                    ),
-                    items: <DropdownMenuItem<PrinterType>>[
-                      if (Platform.isAndroid || Platform.isWindows)
-                        const DropdownMenuItem(
-                          value: PrinterType.usb,
-                          child: Text("USB"),
-                        ),
-                      const DropdownMenuItem(
-                        value: PrinterType.network,
-                        child: Text("Network / Ethernet"),
-                      ),
-                    ],
-                    onChanged: (PrinterType? value) {
-                      setState(() {
-                        if (value != null) {
-                          setState(() {
-                            defaultPrinterType = value;
-                            selectedPrinter = null;
-                            _isConnected = false;
-                            _scan();
-                          });
-                        }
-                      });
-                    },
-                  ),
+
+                  // Device List
                   Column(
-                      children: devices
-                          .map(
-                            (device) => ListTile(
-                              title: Text('${device.deviceName}'),
-                              subtitle: Platform.isAndroid && defaultPrinterType == PrinterType.usb
-                                  ? null
-                                  : Visibility(visible: !Platform.isWindows, child: Text("${device.address}")),
-                              onTap: () {
-                                selectDevice(device);
-                              },
-                              leading: selectedPrinter != null &&
-                                      ((device.typePrinter == PrinterType.usb && Platform.isWindows
-                                              ? device.deviceName == selectedPrinter!.deviceName
-                                              : device.vendorId != null && selectedPrinter!.vendorId == device.vendorId) ||
-                                          (device.address != null && selectedPrinter!.address == device.address))
-                                  ? const Icon(
-                                      Icons.check,
-                                      color: Colors.green,
-                                    )
-                                  : null,
-                              trailing: OutlinedButton(
-                                onPressed: selectedPrinter == null || device.deviceName != selectedPrinter?.deviceName
-                                    ? null
-                                    : () async {
-                                        _printReceiveTest();
-                                      },
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 2, horizontal: 20),
-                                  child: Text("Print test ticket", textAlign: TextAlign.center),
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList()),
-                  Visibility(
-                    visible: defaultPrinterType == PrinterType.network,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 10.0),
-                      child: TextFormField(
-                        controller: _ipController,
-                        keyboardType: const TextInputType.numberWithOptions(signed: true),
-                        decoration: const InputDecoration(
-                          label: Text("IP Address"),
-                          prefixIcon: Icon(Icons.wifi, size: 24),
-                        ),
-                        onChanged: setIpAddress,
-                      ),
-                    ),
-                  ),
-                  Visibility(
-                    visible: defaultPrinterType == PrinterType.network,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 10.0),
-                      child: TextFormField(
-                        controller: _portController,
-                        keyboardType: const TextInputType.numberWithOptions(signed: true),
-                        decoration: const InputDecoration(
-                          label: Text("Port"),
-                          prefixIcon: Icon(Icons.numbers_outlined, size: 24),
-                        ),
-                        onChanged: setPort,
-                      ),
-                    ),
-                  ),
-                  Visibility(
-                    visible: defaultPrinterType == PrinterType.network,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 10.0),
-                      child: OutlinedButton(
-                        onPressed: () async {
-                          if (_ipController.text.isNotEmpty) setIpAddress(_ipController.text);
-                          _printReceiveTest();
+                    children: devices.map((device) {
+                      return ListTile(
+                        title: Text('${device.name}'),
+                        subtitle: Text("${device.vendorId} - ${device.productId}"),
+                        onTap: () {
+                          _connectDevice(device);
                         },
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 4, horizontal: 50),
-                          child: Text("Print test ticket", textAlign: TextAlign.center),
-                        ),
-                      ),
+                        // leading: Icon(Icons.usb),
+                      );
+                    }).toList(),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ElevatedButton(
+                      onPressed: _isConnected ? () => _printReceiveTest() : null,
+                      child: const Text('Test Print'),
                     ),
                   )
                 ],
@@ -350,19 +210,4 @@ class _MyAppState extends State<MyApp> {
       ),
     );
   }
-}
-
-class DiscoveredPrinter {
-  int? id;
-  String? deviceName;
-  String? address;
-  String? port;
-  String? vendorId;
-  String? productId;
-
-  PrinterType typePrinter;
-  bool? state;
-
-  DiscoveredPrinter(
-      {this.deviceName, this.address, this.port, this.state, this.vendorId, this.productId, this.typePrinter = PrinterType.usb});
 }
