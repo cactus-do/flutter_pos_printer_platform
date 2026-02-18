@@ -153,8 +153,13 @@ class TcpTransport extends PrinterTransport {
   }
 
   /// Starts a scan for network printers.
-  static Stream<PrinterDevice> discovery({String? ipAddress, int port = 9100}) async* {
-    print("Starting network discovery (TCP) on port $port");
+  /// If [resolveIdentity] is true, it will attempt to fetch the serial number for each found printer.
+  static Stream<PrinterDevice> discovery({
+    String? ipAddress,
+    int port = 9100,
+    bool resolveIdentity = false,
+  }) async* {
+    print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
     String? deviceIp;
     if (Platform.isAndroid || Platform.isIOS) {
@@ -180,7 +185,16 @@ class TcpTransport extends PrinterTransport {
     await for (var data in stream) {
       if (data.exists) {
         print("Found device at ${data.ip}");
-        yield PrinterDevice(name: "${data.ip}:$port", address: data.ip);
+        var device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);
+
+        if (resolveIdentity) {
+          final info = await getPrinterInfo(ipAddress: data.ip, port: port);
+          device.serialNumber = info.serialNumber;
+          device.model = info.model;
+          device.manufacturer = info.manufacturer;
+        }
+
+        yield device;
       }
     }
     print("Network discovery finished.");

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
-import 'dart:io';
 
 void main() {
   runApp(const MyApp());
@@ -19,53 +18,47 @@ class _MyAppState extends State<MyApp> {
   // Printer Type
   var defaultPrinterType = PrinterType.usb;
   var _isConnected = false;
-  var printerManager = PrinterManager.instance;
+
+  // DRIVER-FIRST ARCHITECTURE:
+  // Instead of a single manager, we maintain our own fleet of drivers
+  final Map<String, PrinterTransport> _activePrinters = {};
+
   var devices = <PrinterDevice>[];
   StreamSubscription<PrinterDevice>? _subscription;
-  StreamSubscription<USBStatus>? _subscriptionUsbStatus;
-  // Use generic input model
-  TcpPrinterInput tcpPrinterInput = TcpPrinterInput(ipAddress: '192.168.0.123', port: 9100);
-  // Separate list for specific models if needed, but for now we just use the inputs.
 
-  // State for USB
-  // in the new architecture, we don't have a single "selected printer" state in the manager
-  // we have to manage it ourselves or rely on the manager's active transport.
-  // The manager maintains _usbTransport and _tcpTransport.
+  // We keep a dedicated USB transport for the single USB slot
+  UsbTransport _usbTransport = UsbTransport();
 
   @override
   void initState() {
     super.initState();
     _scan();
-
-    // USB Connection Status Listener
-    _subscriptionUsbStatus = printerManager.stateUSB.listen((status) {
-      print(' ----------------- status usb $status ------------------ ');
-      if (Platform.isAndroid) {
-        if (status == USBStatus.connected && !_isConnected) {
-          setState(() {
-            _isConnected = true;
-          });
-        } else if (status == USBStatus.none && _isConnected) {
-          setState(() {
-            _isConnected = false;
-          });
-        }
-      }
-    });
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
-    _subscriptionUsbStatus?.cancel();
+    // In a real app, you'd close all active transports here
+    for (var transport in _activePrinters.values) {
+      transport.disconnect();
+    }
     super.dispose();
   }
 
   // Method to scan with type
   void _scan() {
-    devices.clear();
-    _subscription = printerManager.discovery(type: defaultPrinterType, model: tcpPrinterInput).listen((device) {
-      print(device.name);
+    setState(() {
+      devices.clear();
+    });
+
+    // We use the driver's discovery directly
+    final stream = (defaultPrinterType == PrinterType.usb)
+        ? UsbTransport.discovery()
+        : TcpTransport.discovery(resolveIdentity: true); // We want Serial Numbers
+
+    _subscription?.cancel();
+    _subscription = stream.listen((device) {
+      print('Found: ${device.name} (SN: ${device.serialNumber})');
       setState(() {
         devices.add(device);
       });
@@ -73,29 +66,41 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _connectDevice(PrinterDevice selectedPrinter) async {
-    switch (defaultPrinterType) {
-      case PrinterType.usb:
-        // Create UsbPrinterInput
-        final input = UsbPrinterInput(
-          name: selectedPrinter.name,
-          productId: selectedPrinter.productId,
-          vendorId: selectedPrinter.vendorId,
-        );
-        await printerManager.connect(type: defaultPrinterType, model: input);
-        break;
-      case PrinterType.network:
-        // Create TcpPrinterInput
-        final input = TcpPrinterInput(
-          ipAddress: selectedPrinter.address!,
-          port: 9100, // Default port or from user input
-        );
-        await printerManager.connect(type: defaultPrinterType, model: input);
-        break;
+    PrinterTransport transport;
+
+    if (defaultPrinterType == PrinterType.usb) {
+      // For USB, we update our dedicated transport
+      _usbTransport = UsbTransport(
+        name: selectedPrinter.name,
+        productId: selectedPrinter.productId,
+        vendorId: selectedPrinter.vendorId,
+      );
+      transport = _usbTransport;
+    } else {
+      // For Network, we create a new instance for this specific printer
+      // Use IP as the temporary key or Serial Number if available
+      final String id = selectedPrinter.serialNumber ?? selectedPrinter.address!;
+
+      transport = TcpTransport(
+        ipAddress: selectedPrinter.address!,
+        port: 9100,
+      );
+      _activePrinters[id] = transport;
     }
 
-    setState(() {
-      _isConnected = true;
-    });
+    // Connect individual driver
+    final success = await transport.connect();
+
+    if (success) {
+      // Every printer now has its OWN heartbeat and status listeners
+      transport.status.listen((status) {
+        print('PRINTER STATUS CHANGED: $status');
+      });
+
+      setState(() {
+        _isConnected = true;
+      });
+    }
   }
 
   Future<void> _printReceiveTest() async {
@@ -103,32 +108,21 @@ class _MyAppState extends State<MyApp> {
 
     // Xprinter XP-N160I
     final profile = await CapabilityProfile.load(name: 'XP-N160I');
-
-    // PaperSize.mm80 or mm58
     final generator = Generator(PaperSize.mm80, profile);
+
     bytes += generator.setGlobalCodeTable('CP1252');
-    bytes += generator.text('Test Print', styles: const PosStyles(align: PosAlign.center));
-    bytes += generator.text('Product 1');
-    bytes += generator.text('Product 2');
+    bytes += generator.text('Fleet Printing Test', styles: const PosStyles(align: PosAlign.center));
+    bytes += generator.text('This is a direct-driver setup.');
 
-    // Print image using EscPosGenerator from the package (since esc_pos_utils might not support new image_v3 well or we want to test our generator)
-    // Or we can use esc_pos_utils generator for everything if it works.
-    // The previous main.dart used EscPosPrinter.image() which used our internal logic.
-    // So let's use our internal EscPosGenerator for the image part at least?
-    // Mixed generators might be tricky if they state reset.
-    // Let's stick to esc_pos_utils for text and check if it has image support.
+    // Send to all active printers in parallel!
+    for (var transport in _activePrinters.values) {
+      transport.send(bytes);
+    }
 
-    // Actually, let's look at how we can use EscPosGenerator from our package
-    // Our package exports EscPosGenerator.
-    // It takes PaperSize (from our package?) or just width?
-    // EscPosGenerator(paperSize: PaperSize.mm80) -> wait, does it exist?
-    // I created EscPosGenerator earlier. Let's check its constructor.
-
-    // It has `EscPosGenerator({this.paperSize = PaperSize.mm80, this.profile})`?
-    // I need to check `esc_pos_generator.dart`.
-
-    // Assuming standard usage:
-    printerManager.send(type: defaultPrinterType, bytes: bytes);
+    // Also send to USB if connected
+    if (defaultPrinterType == PrinterType.usb) {
+      _usbTransport.send(bytes);
+    }
   }
 
   @override

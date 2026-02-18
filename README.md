@@ -15,143 +15,60 @@ Inspired by [flutter_pos_printer](https://github.com/feedmepos/flutter_printer/t
 
 ## Main Features
 * Android, iOS and Windows support
-* Scan for bluetooth devices
-* Send raw `List<int> bytes` data to a device, review this library to generate ESC/POS commands [flutter_esc_pos_utils](https://pub.dev/packages/flutter_esc_pos_utils).
+* **Parallel Printer Support**: Connect to multiple printers simultaneously, each with its own heartbeat.
+* **Identity-First Discovery**: Resolve Serial Numbers for network printers to handle DHCP changes.
+* Send raw `List<int> bytes` data to a device.
 
 ## Features
 
 |                         |      Android       |         iOS          |      Windows       |            Description            |
 | :---------------        | :----------------: | :------------------: | :----------------: | :-------------------------------- |
 | USB interface           | :white_check_mark: |  :white_square_button: | :white_check_mark: | Allows connection with usb devices. |
-| Bluetooth classic interface | :white_check_mark: |  :white_square_button:  | :white_square_button: | Allows connection with classic bt devices. |
-| Bluetooth low energy (BLE) interface | :white_check_mark: |  :white_check_mark:  | :white_square_button: | Allows connection with bt BLE devices. |
 | Net (ethernet/wifi) interface | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Allows connection with network devices. |
-| scan                    | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Starts a scan for only Bluetooth devices or network devices(Android/iOS). |
+| scan                    | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Starts a scan for network or USB devices. |
 | connect                 | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Establishes a connection to the device. |
 | disconnect              | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Cancels an active or pending connection to the device. |
-| state                   | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Stream of state changes for the Bluetooth Device. |
-| print                   | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | print bytes. |
-
-## Getting Started
-
-For a full example please check /example folder. Here are only the most important parts of the code to illustrate how to use the library.
-
-Generate bytes to print through [flutter_esc_pos_utils](https://pub.dev/packages/flutter_esc_pos_utils).
-
-```dart
-    import 'package:esc_pos_utils/esc_pos_utils.dart';
-
-    final profile = await CapabilityProfile.load();
-    final generator = Generator(PaperSize.mm58, profile);
-    List<int> bytes = [];
-
-    bytes += generator.text('Test Print', styles: const PosStyles(align: PosAlign.center));
-    bytes += generator.text('Product 1');
-    bytes += generator.text('Product 2');
-```
-
-## Android
-Allow to connect bluetooth (classic and BLE), USB and network devices
-
-### Change the minSdkVersion for Android
-
-flutter_pos_printer_platform is compatible only from version 21 of Android SDK so you should change this in android/app/build.gradle:
-
-In build.gradle set
-```
-    defaultConfig {
-        ...
-        minSdkVersion 21
-        targetSdkVersion 31
-        ...
-```
-
-select type of device `PrinterType` ( bluetooth, usb, network)
-
-if select bluetooth you can send optional params
-
-- isBle -> allow to connect with bluetooth that supports this technology
-- autoconnect -> allow to reconnect when state of device is None
-
-## iOS
-Allow to connect bluetooth (BLE) and network devices
-
-## Windows
-Allow to connect USB and network devices
-To network devices is necessary to set ipAddress
-
+| state                   | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Stream of connection state changes. |
+| status                  | :white_check_mark: |  :white_check_mark:  | :white_check_mark: | Stream of printer status (Paper low/out). |
 
 ## How to use it
-### init a PrinterManager instance
+
+### 1. Discovery
+Use the static discovery methods from the specific driver.
 
 ```dart
-import 'package:flutter_pos_printer_platform/flutter_pos_printer_platform.dart';
+// Network Discovery with Identity (Serial Number) resolution
+TcpTransport.discovery(resolveIdentity: true).listen((device) {
+    print('Found: ${device.address} (SN: ${device.serialNumber})');
+});
 
-    var printerManager = PrinterManager.instance;
+// USB Discovery
+UsbTransport.discovery().listen((device) {
+    print('Found: ${device.name}');
+});
+```
 
- ```
-
-### scan
+### 2. Multi-Printer Management
+Maintain your own fleet of independent transports.
 
 ```dart
-    var devices = [];
-    _scan(PrinterType type, {bool isBle = false}) {
-        // Find printers
-        PrinterManager.instance.discovery(type: type, isBle: isBle).listen((device) {
-            devices.add(device);
-        });
+final kitchen = TcpTransport(ipAddress: '192.168.1.50');
+final bar = TcpTransport(ipAddress: '192.168.1.51');
+
+// Each has its own HEARTBEAT and STATUS
+kitchen.status.listen((status) {
+  if (status == PrinterStatus.paperOut) print("Kitchen is out of paper!");
+});
+
+await kitchen.connect();
+await bar.connect();
+```
+
+### 3. Send bytes to print
+```dart
+    _sendBytesToPrint(List<int> bytes, PrinterTransport transport) async { 
+      await transport.send(bytes);
     }
-```
-
-### connect
-
-```dart
-_connectDevice(PrinterDevice selectedPrinter, PrinterType type, {bool reconnect = false, bool isBle = false, String? ipAddress = null}) async {
-    switch (type) {
-      // only windows and android
-      case PrinterType.usb:
-        await PrinterManager.instance.connect(
-            type: type,
-            model: UsbPrinterInput(name: selectedPrinter.name, productId: selectedPrinter.productId, vendorId: selectedPrinter.vendorId));
-        break;
-      // only iOS and android
-      case PrinterType.bluetooth:
-        await PrinterManager.instance.connect(
-            type: type,
-            model: BluetoothPrinterInput(
-                name: selectedPrinter.name,
-                address: selectedPrinter.address!,
-                isBle: isBle,
-                autoConnect: reconnect));
-        break;
-      case PrinterType.network:
-        await PrinterManager.instance.connect(type: type, model: TcpPrinterInput(ipAddress: ipAddress ?? selectedPrinter.address!));
-        break;
-      default:
-    }
-  }
-```
-### disconnect
-
-```dart
-    _disconnectDevice(PrinterType type) async {
-        await PrinterManager.instance.disconnect(type: type);
-        }
-```
-
-### listen bluetooth state
-```dart
-    PrinterManager.instance.stateBluetooth.listen((status) {
-      log(' ----------------- status bt $status ------------------ ');
-    });
-```
-
-### send bytes to print
-```dart
-    _sendBytesToPrint(List<int> bytes, PrinterType type) async { 
-      PrinterManager.instance.send(type: type, bytes: bytes);
-    }
-
 ```
 
 ## Troubleshooting

@@ -4,7 +4,6 @@ export './src/enums.dart';
 export './src/models/printer_input.dart';
 export './src/models/printer_device.dart';
 export './src/printer_info.dart';
-export './src/printer_manager.dart';
 export './src/generators/esc_pos_generator.dart';
 export './src/generators/tspl_generator.dart';
 export './src/transports/printer_transport.dart';
