@@ -1,6 +1,6 @@
 name: flutter_pos_printer_platform_image_3
 description: A flutter plugin for POS thermal printers via USB and TCP/Ethernet. Supports ESC/POS and TSPL command protocols on Android, iOS, and Windows.
-version: 2.0.1
+version: 3.0.0
 homepage: https://github.com/cactus-do/flutter_pos_printer_platform
 
 environment:
