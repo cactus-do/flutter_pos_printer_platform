@@ -32,7 +32,8 @@ abstract class FlutterPosPrinterPlatform extends PlatformInterface {
   ///
   /// [vendorId] and [productId] are required for Android.
   /// [name] is required for Windows.
-  Future<bool> connect({String? name, String? vendorId, String? productId}) {
+  /// [address] is the port path / device name for Android (e.g. /dev/bus/usb/...).
+  Future<bool> connect({String? name, String? vendorId, String? productId, String? address}) {
     throw UnimplementedError('connect() has not been implemented.');
   }
 
@@ -44,6 +45,16 @@ abstract class FlutterPosPrinterPlatform extends PlatformInterface {
   /// Write data to the connected USB printer.
   Future<bool> write(List<int> bytes) {
     throw UnimplementedError('write() has not been implemented.');
+  }
+
+  /// Read data from the connected USB printer.
+  Future<List<int>?> read({int timeout = 2000}) {
+    throw UnimplementedError('read() has not been implemented.');
+  }
+
+  /// Stream of raw data received from the USB printer.
+  Stream<List<int>> get usbDataStream {
+    throw UnimplementedError('usbDataStream has not been implemented.');
   }
 
   /// Stream of USB connection status.

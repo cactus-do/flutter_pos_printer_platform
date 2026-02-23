@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'printer_transport.dart';
-import 'package:dart_snmp/dart_snmp.dart';
 import 'package:flutter_pos_printer_platform_image_3/src/enums.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import '../utils/network_analyzer.dart';
@@ -201,59 +200,42 @@ class TcpTransport extends PrinterTransport {
   }
 
   static Future<PrinterInfo> getPrinterInfo({required String ipAddress, int port = 9100}) async {
-    PrinterInfo info = PrinterInfo();
+    Socket? socket;
     // Strategy A: ESC/POS (Port 9100)
     try {
-      final socket = await Socket.connect(ipAddress, port, timeout: Duration(seconds: 2));
+      socket = await Socket.connect(ipAddress, port, timeout: Duration(seconds: 2));
       // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
-      socket.add([0x1D, 0x49, 0x44]);
+      final serial = await _getEscPosData(socket, [0x1D, 0x49, 0x44]);
+      // Send GS I n (Transmit Printer ID) - 67 = Model (0x43)
+      final model = await _getEscPosData(socket, [0x1D, 0x49, 0x43]);
 
-      final completer = Completer<String?>();
-      final subscription = socket.listen((data) {
-        try {
-          final filtered = data.where((b) => b >= 32 && b <= 126).toList();
-          if (filtered.isNotEmpty) {
-            final str = String.fromCharCodes(filtered);
-            if (!completer.isCompleted) completer.complete(str);
-          }
-        } catch (e) {
-          if (!completer.isCompleted) completer.complete(null);
-        }
-      });
-
-      final serial = await completer.future.timeout(Duration(seconds: 2), onTimeout: () => null);
-      await subscription.cancel();
-      socket.destroy();
-
-      if (serial != null && serial.isNotEmpty) {
-        return PrinterInfo(serialNumber: serial, model: 'Unknown', manufacturer: 'Unknown');
-      }
+      return PrinterInfo(serialNumber: serial, model: model, manufacturer: 'Unknown');
     } catch (e) {
       print('ESC/POS Query failed: $e');
+      return PrinterInfo();
+    } finally {
+      socket?.destroy();
     }
+  }
 
-    // Strategy B: SNMP (Fallback)
-    try {
-      final target = InternetAddress(ipAddress);
-      final session = await Snmp.createSession(target);
-      final oid = Oid.fromString('1.3.6.1.2.1.43.5.1.1.17.1'); // prtGeneralSerialNumber
-      final message = await session.get(oid);
-
-      if (message.pdu.varbinds.isNotEmpty) {
-        final serial = message.pdu.varbinds.first.value.toString();
-        if (serial.isNotEmpty) {
-          return PrinterInfo(
-            serialNumber: serial,
-            model: 'Unknown',
-            manufacturer: 'Unknown',
-          );
+  static Future<String?> _getEscPosData(Socket socket, List<int> bytes) async {
+    socket.add(bytes);
+    
+    final completer = Completer<String?>();
+    final subscription = socket.listen((data) {
+      try {
+        final filtered = data.where((b) => b >= 32 && b <= 126).toList();
+        if (filtered.isNotEmpty) {
+          final str = String.fromCharCodes(filtered);
+          if (!completer.isCompleted) completer.complete(str);
         }
+      } catch (e) {
+        if (!completer.isCompleted) completer.complete(null);
       }
-      session.close();
-    } catch (e) {
-      print('SNMP Query failed: $e');
-    }
-
-    return info;
+    });
+    
+    final result = await completer.future.timeout(Duration(seconds: 2), onTimeout: () => null);
+    await subscription.cancel();
+    return result;
   }
 }

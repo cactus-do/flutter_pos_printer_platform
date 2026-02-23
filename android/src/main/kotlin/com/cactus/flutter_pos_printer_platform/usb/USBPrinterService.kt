@@ -23,7 +23,10 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
     private var mUsbDeviceConnection: UsbDeviceConnection? = null
     private var mUsbInterface: UsbInterface? = null
     private var mEndPoint: UsbEndpoint? = null
+    private var mEndPointIn: UsbEndpoint? = null
     var state: Int = STATE_USB_NONE
+    private var isReading = false
+    private var readThread: Thread? = null
 
     fun setHandler(handler: Handler?) {
         mHandler = handler
@@ -98,6 +101,7 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
             mUsbDeviceConnection!!.close()
             mUsbInterface = null
             mEndPoint = null
+            mEndPointIn = null
             mUsbDevice = null
             mUsbDeviceConnection = null
         }
@@ -112,14 +116,24 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
             return ArrayList(mUSBManager!!.deviceList.values)
         }
 
-    fun selectDevice(vendorId: Int, productId: Int): Boolean {
+    fun selectDevice(vendorId: Int, productId: Int, address: String? = null): Boolean {
 //        Log.v(LOG_TAG, " status usb ______ $state")
-        if ((mUsbDevice == null) || (mUsbDevice!!.vendorId != vendorId) || (mUsbDevice!!.productId != productId)) {
+        var needReconnect = false
+        if (mUsbDevice == null || mUsbDevice!!.vendorId != vendorId || mUsbDevice!!.productId != productId) {
+            needReconnect = true
+        } else if (address != null && mUsbDevice!!.deviceName != address) {
+            needReconnect = true
+        }
+
+        if (needReconnect) {
             synchronized(printLock) {
                 closeConnectionIfExists()
                 val usbDevices: List<UsbDevice> = deviceList
                 for (usbDevice: UsbDevice in usbDevices) {
                     if ((usbDevice.vendorId == vendorId) && (usbDevice.productId == productId)) {
+                        if (address != null && usbDevice.deviceName != address) {
+                            continue
+                        }
                         Log.v(LOG_TAG, "Request for device: vendor_id: " + usbDevice.vendorId + ", product_id: " + usbDevice.productId)
                         closeConnectionIfExists()
                         mUSBManager!!.requestPermission(usbDevice, mPermissionIndent)
@@ -147,49 +161,142 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
             return false
         }
         if (mUsbDeviceConnection != null) {
-            Log.i(LOG_TAG, "USB Connection already connected")
             return true
         }
-        val usbInterface = mUsbDevice!!.getInterface(0)
-        for (i in 0 until usbInterface.endpointCount) {
-            val ep = usbInterface.getEndpoint(i)
-            if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
-                if (ep.direction == UsbConstants.USB_DIR_OUT) {
-                    val usbDeviceConnection = mUSBManager!!.openDevice(mUsbDevice)
-                    if (usbDeviceConnection == null) {
-                        Log.e(LOG_TAG, "Failed to open USB Connection")
-                        return false
-                    }
-                    Toast.makeText(mContext, mContext?.getString(R.string.connected_device), Toast.LENGTH_SHORT).show()
-                    return if (usbDeviceConnection.claimInterface(usbInterface, true)) {
-                        mEndPoint = ep
-                        mUsbInterface = usbInterface
-                        mUsbDeviceConnection = usbDeviceConnection
-                        true
-                    } else {
-                        usbDeviceConnection.close()
-                        Log.e(LOG_TAG, "Failed to retrieve usb connection")
-                        false
+
+        var epOut: UsbEndpoint? = null
+        var epIn: UsbEndpoint? = null
+        var targetInterface: UsbInterface? = null
+
+        // Improved endpoint discovery: search through all interfaces
+        val interfaceCount = mUsbDevice!!.interfaceCount
+        Log.d(LOG_TAG, "Scanning $interfaceCount interfaces for endpoints")
+        
+        for (i in 0 until interfaceCount) {
+            val usbInterface = mUsbDevice!!.getInterface(i)
+            var currentEpOut: UsbEndpoint? = null
+            var currentEpIn: UsbEndpoint? = null
+
+            for (j in 0 until usbInterface.endpointCount) {
+                val ep = usbInterface.getEndpoint(j)
+                if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                    if (ep.direction == UsbConstants.USB_DIR_OUT) {
+                        currentEpOut = ep
+                    } else if (ep.direction == UsbConstants.USB_DIR_IN) {
+                        currentEpIn = ep
                     }
                 }
             }
+
+            // A valid printer interface usually has at least a BULK OUT endpoint.
+            // Some specialized printers might not have a BULK IN on the same interface, 
+            // but we prefer one that has both.
+            if (currentEpOut != null) {
+                epOut = currentEpOut
+                epIn = currentEpIn
+                targetInterface = usbInterface
+                // If we found both on this interface, we stop searching
+                if (epIn != null) {
+                    Log.d(LOG_TAG, "Found both IN and OUT endpoints on interface $i")
+                    break
+                }
+            }
         }
-        return true
+
+        if (epOut == null || targetInterface == null) {
+            Log.e(LOG_TAG, "Failed to find suitable USB BULK OUT endpoint")
+            return false
+        }
+
+        val usbDeviceConnection = mUSBManager!!.openDevice(mUsbDevice)
+        if (usbDeviceConnection == null) {
+            Log.e(LOG_TAG, "Failed to open USB Connection")
+            return false
+        }
+        
+        // Explicitly set configuration
+        try {
+            if (mUsbDevice!!.configurationCount > 0) {
+                usbDeviceConnection.setConfiguration(mUsbDevice!!.getConfiguration(0))
+                Log.d(LOG_TAG, "Set USB Configuration 0")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set configuration: ${e.message}")
+        }
+
+        return if (usbDeviceConnection.claimInterface(targetInterface, true)) {
+            mEndPoint = epOut
+            mEndPointIn = epIn
+            mUsbInterface = targetInterface
+            mUsbDeviceConnection = usbDeviceConnection
+            Log.d(LOG_TAG, "Connection opened and interface claimed: OUT=$mEndPoint, IN=$mEndPointIn")
+            
+            // Give the printer a moment to settle after claiming the interface
+            try { Thread.sleep(500) } catch (e: Exception) {}
+            
+            if (mEndPointIn == null) {
+                Log.w(LOG_TAG, "WARNING: This printer might not support reading (No IN endpoint found)")
+            } else {
+                startReadThread()
+            }
+            true
+        } else {
+            usbDeviceConnection.close()
+            Log.e(LOG_TAG, "Failed to claim USB interface")
+            false
+        }
+    }
+
+    private fun startReadThread() {
+        if (isReading) return
+        isReading = true
+        readThread = Thread {
+            try {
+                Log.d(LOG_TAG, "Read thread loop started")
+                val buffer = ByteArray(1024)
+                while (isReading && mUsbDeviceConnection != null && mEndPointIn != null) {
+                    val bytesRead = mUsbDeviceConnection!!.bulkTransfer(mEndPointIn, buffer, buffer.size, 100)
+                    if (bytesRead > 0) {
+                        val data = buffer.copyOfRange(0, bytesRead)
+                        Log.d(LOG_TAG, "Read thread captured ${data.size} bytes: ${data.contentToString()}")
+                        val handler = mHandler
+                        if (handler != null) {
+                            val msg = handler.obtainMessage(DATA_READ, data)
+                            handler.sendMessage(msg)
+                        } else {
+                            Log.w(LOG_TAG, "Read thread captured data but mHandler is null")
+                        }
+                    } else if (bytesRead < 0 && bytesRead != -1) { // -1 is usually a timeout, which is normal
+                        Log.v(LOG_TAG, "Read thread bulkTransfer returned error code: $bytesRead")
+                        try { Thread.sleep(100) } catch (e: Exception) { break }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Read thread encountered exception: ${e.message}")
+            } finally {
+                isReading = false
+                Log.d(LOG_TAG, "Read thread exited/stopped")
+            }
+        }
+        readThread?.start()
+    }
+
+    private fun stopReadThread() {
+        isReading = false
+        readThread?.interrupt()
+        readThread = null
     }
 
     fun printText(text: String): Boolean {
         Log.v(LOG_TAG, "Printing text")
         val isConnected = openConnection()
         return if (isConnected) {
-            Log.v(LOG_TAG, "Connected to device")
-            Thread {
-                synchronized(printLock) {
-                    val bytes: ByteArray = text.toByteArray(Charset.forName("UTF-8"))
-                    val b: Int = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, bytes, bytes.size, 100000)
-                    Log.i(LOG_TAG, "Return code: $b")
-                }
-            }.start()
-            true
+            synchronized(printLock) {
+                val bytes: ByteArray = text.toByteArray(Charset.forName("UTF-8"))
+                val b: Int = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, bytes, bytes.size, 100000)
+                Log.i(LOG_TAG, "Return code: $b")
+                b >= 0
+            }
         } else {
             Log.v(LOG_TAG, "Failed to connect to device")
             false
@@ -200,15 +307,12 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
         Log.v(LOG_TAG, "Printing raw data: $data")
         val isConnected = openConnection()
         return if (isConnected) {
-            Log.v(LOG_TAG, "Connected to device")
-            Thread {
-                synchronized(printLock) {
-                    val bytes: ByteArray = Base64.decode(data, Base64.DEFAULT)
-                    val b: Int = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, bytes, bytes.size, 100000)
-                    Log.i(LOG_TAG, "Return code: $b")
-                }
-            }.start()
-            true
+            synchronized(printLock) {
+                val bytes: ByteArray = Base64.decode(data, Base64.DEFAULT)
+                val b: Int = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, bytes, bytes.size, 100000)
+                Log.i(LOG_TAG, "Write raw result code: $b")
+                b >= 0
+            }
         } else {
             Log.v(LOG_TAG, "Failed to connected to device")
             false
@@ -216,55 +320,64 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
     }
 
     fun printBytes(bytes: ArrayList<Int>): Boolean {
-        Log.v(LOG_TAG, "Printing bytes")
+        Log.v(LOG_TAG, "Printing bytes: size=${bytes.size}")
         val isConnected = openConnection()
-        if (isConnected) {
-            val chunkSize = mEndPoint!!.maxPacketSize
-            Log.v(LOG_TAG, "Max Packet Size: $chunkSize")
-            Log.v(LOG_TAG, "Connected to device")
-            Thread {
-                synchronized(printLock) {
-                    val vectorData: Vector<Byte> = Vector()
-                    for (i in bytes.indices) {
-                        val `val`: Int = bytes[i]
-                        vectorData.add(`val`.toByte())
-                    }
-                    val temp: Array<Any> = vectorData.toTypedArray()
-                    val byteData = ByteArray(temp.size)
-                    for (i in temp.indices) {
-                        byteData[i] = temp[i] as Byte
-                    }
-                    var b = 0
-                    if (mUsbDeviceConnection != null) {
-                        if (byteData.size > chunkSize) {
-                            var chunks: Int = byteData.size / chunkSize
-                            if (byteData.size % chunkSize > 0) {
-                                ++chunks
-                            }
-                            for (i in 0 until chunks) {
-//                                val buffer: ByteArray = byteData.copyOfRange(i * chunkSize, chunkSize + i * chunkSize)
-                                val buffer: ByteArray = Arrays.copyOfRange(byteData, i * chunkSize, chunkSize + i * chunkSize)
-                                b = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, buffer, chunkSize, 100000)
-                            }
-                        } else {
-                            b = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, byteData, byteData.size, 100000)
-                        }
-                        Log.i(LOG_TAG, "Return code: $b")
-                    }
-                }
-            }.start()
-            return true
-        } else {
+        if (!isConnected) {
             Log.v(LOG_TAG, "Failed to connected to device")
             return false
         }
+        
+        val chunkSize = mEndPoint!!.maxPacketSize
+        synchronized(printLock) {
+            val vectorData: Vector<Byte> = Vector()
+            for (i in bytes.indices) {
+                val `val`: Int = bytes[i]
+                vectorData.add(`val`.toByte())
+            }
+            val temp: Array<Any> = vectorData.toTypedArray()
+            val byteData = ByteArray(temp.size)
+            for (i in temp.indices) {
+                byteData[i] = temp[i] as Byte
+            }
+
+            var success = true
+            if (mUsbDeviceConnection != null) {
+                if (byteData.size > chunkSize) {
+                    var chunks: Int = byteData.size / chunkSize
+                    if (byteData.size % chunkSize > 0) {
+                        ++chunks
+                    }
+                    for (i in 0 until chunks) {
+                        val fromIndex = i * chunkSize
+                        val toIndex = (fromIndex + chunkSize).coerceAtMost(byteData.size)
+                        val buffer: ByteArray = Arrays.copyOfRange(byteData, fromIndex, toIndex)
+                        val b = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, buffer, buffer.size, 100000)
+                        Log.i(LOG_TAG, "Write bytes result code (chunk $i): $b")
+                        if (b < 0) {
+                            Log.e(LOG_TAG, "Bulk transfer failed at chunk $i: return code $b")
+                            success = false
+                        }
+                    }
+                } else {
+                    val b = mUsbDeviceConnection!!.bulkTransfer(mEndPoint, byteData, byteData.size, 100000)
+                    Log.i(LOG_TAG, "Write bytes result code: $b")
+                    if (b < 0) success = false
+                }
+            }
+            return success
+        }
+    }
+
+    fun readBytes(timeout: Int = 2000): ByteArray? {
+        // legacy method, no longer used in stream-based architecture
+        return null
     }
 
     companion object {
         @SuppressLint("StaticFieldLeak")
         private var mInstance: USBPrinterService? = null
-        private const val LOG_TAG = "ESC POS Printer"
-        private const val ACTION_USB_PERMISSION = "com.flutter_pos_printer.USB_PERMISSION"
+        private const val LOG_TAG = "USBPrinterService" // Updated LOG_TAG
+        private const val ACTION_USB_PERMISSION = "com.cactus.flutter_pos_printer_platform.USB_PERMISSION"
 
         // Constants that indicate the current connection state
         const val STATE_USB_NONE = 0 // we're doing nothing
@@ -273,10 +386,18 @@ class USBPrinterService private constructor(private var mHandler: Handler?) {
 
         private val printLock = Any()
 
+        // New constants for connection states and data read
+        const val STATE_CONNECTED = 1
+        const val STATE_CONNECTING = 2
+        const val STATE_NONE = 3
+        const val DATA_READ = 4
+
         fun getInstance(handler: Handler): USBPrinterService {
             Log.d("USBPrinterService", "getInstance called")
             if (mInstance == null) {
                 mInstance = USBPrinterService(handler)
+            } else {
+                mInstance!!.setHandler(handler)
             }
             return mInstance!!
         }

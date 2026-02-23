@@ -28,6 +28,8 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
     private var channel: MethodChannel? = null
     private var messageUSBChannel: EventChannel? = null
     private var eventUSBSink: EventChannel.EventSink? = null
+    private var dataUSBChannel: EventChannel? = null
+    private var eventDataSink: EventChannel.EventSink? = null
     private var context: Context? = null
     private var currentActivity: Activity? = null
     lateinit var adapter: USBPrinterService
@@ -45,6 +47,12 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
                 USBPrinterService.STATE_USB_NONE -> {
                     eventUSBSink?.success(0)
                 }
+                USBPrinterService.DATA_READ -> {
+                    val data = msg.obj as ByteArray
+                    Log.d(TAG, "Plugin received raw data from Service: ${data.size} bytes")
+                    val intList = data.map { it.toInt() }
+                    eventDataSink?.success(intList)
+                }
             }
         }
     }
@@ -59,7 +67,11 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
         channel?.setMethodCallHandler(null)
         messageUSBChannel?.setStreamHandler(null)
         messageUSBChannel = null
-        adapter.setHandler(null)
+        dataUSBChannel?.setStreamHandler(null)
+        dataUSBChannel = null
+        if (::adapter.isInitialized) {
+            adapter.setHandler(null)
+        }
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -78,6 +90,16 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
             }
             override fun onCancel(p0: Any?) {
                 eventUSBSink = null
+            }
+        })
+
+        dataUSBChannel = EventChannel(binaryMessenger!!, EVENT_CHANNEL_USB_DATA)
+        dataUSBChannel?.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
+                eventDataSink = sink
+            }
+            override fun onCancel(p0: Any?) {
+                eventDataSink = null
             }
         })
 
@@ -109,7 +131,8 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
             "connectPrinter" -> {
                 val vendor: Int? = call.argument("vendor")
                 val product: Int? = call.argument("product")
-                connectPrinter(vendor, product, result)
+                val address: String? = call.argument("address")
+                connectPrinter(vendor, product, address, result)
             }
             "close" -> {
                 closeConn(result)
@@ -123,8 +146,22 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
                 printRawData(raw, result)
             }
             "printBytes" -> {
-                val bytes: ArrayList<Int>? = call.argument("bytes")
+                val bytesArg = call.argument<Any>("bytes")
+                val bytes: ArrayList<Int>? = if (bytesArg is ByteArray) {
+                    val list = ArrayList<Int>(bytesArg.size)
+                    for (b in bytesArg) {
+                        list.add(b.toInt())
+                    }
+                    list
+                } else {
+                    @Suppress("UNCHECKED_CAST")
+                    bytesArg as? ArrayList<Int>
+                }
                 printBytes(bytes, result)
+            }
+            "read" -> {
+                val timeout: Int? = call.argument("timeout")
+                readBytes(timeout, result)
             }
             else -> {
                 result.notImplemented()
@@ -148,14 +185,14 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
         result.success(list)
     }
 
-    private fun connectPrinter(vendorId: Int?, productId: Int?, result: Result) {
+    private fun connectPrinter(vendorId: Int?, productId: Int?, address: String?, result: Result) {
         if (vendorId == null || productId == null) return
         adapter.setHandler(usbHandler)
-        if (!adapter.selectDevice(vendorId, productId)) {
-            Log.d("USBPrinterService", "Could not select device: vendorId=$vendorId, productId=$productId")
+        if (!adapter.selectDevice(vendorId, productId, address)) {
+            Log.d("USBPrinterService", "Could not select device: vendorId=$vendorId, productId=$productId, address=$address")
             result.success(false)
         } else {
-            Log.d("USBPrinterService", "Successfully selected device: vendorId=$vendorId, productId=$productId")
+            Log.d("USBPrinterService", "Successfully selected device: vendorId=$vendorId, productId=$productId, address=$address")
             result.success(true)
         }
     }
@@ -167,17 +204,31 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
     }
 
     private fun printText(text: String?, result: Result) {
-        if (text.isNullOrEmpty()) return
-        adapter.setHandler(usbHandler)
-        adapter.printText(text)
-        result.success(true)
+        if (text.isNullOrEmpty()) {
+            result.success(false)
+            return
+        }
+        Thread {
+            adapter.setHandler(usbHandler)
+            val success = adapter.printText(text)
+            Handler(Looper.getMainLooper()).post {
+                result.success(success)
+            }
+        }.start()
     }
 
     private fun printRawData(base64Data: String?, result: Result) {
-        if (base64Data.isNullOrEmpty()) return
-        adapter.setHandler(usbHandler)
-        adapter.printRawData(base64Data)
-        result.success(true)
+        if (base64Data.isNullOrEmpty()) {
+            result.success(false)
+            return
+        }
+        Thread {
+            adapter.setHandler(usbHandler)
+            val success = adapter.printRawData(base64Data)
+            Handler(Looper.getMainLooper()).post {
+                result.success(success)
+            }
+        }.start()
     }
 
     private fun printBytes(bytes: ArrayList<Int>?, result: Result) {
@@ -185,13 +236,34 @@ class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, Activi
             result.success(false)
             return
         }
-        adapter.setHandler(usbHandler)
-        adapter.printBytes(bytes)
-        result.success(true)
+        Thread {
+            adapter.setHandler(usbHandler)
+            val success = adapter.printBytes(bytes)
+            Handler(Looper.getMainLooper()).post {
+                result.success(success)
+            }
+        }.start()
+    }
+
+    private fun readBytes(timeout: Int?, result: Result) {
+        Thread {
+            adapter.setHandler(usbHandler)
+            val t = timeout ?: 2000
+            val data = adapter.readBytes(t)
+            Handler(Looper.getMainLooper()).post {
+                if (data != null) {
+                    val intList = data.map { it.toInt() }
+                    result.success(intList)
+                } else {
+                    result.success(null)
+                }
+            }
+        }.start()
     }
 
     companion object {
         const val METHOD_CHANNEL = "com.cactus.flutter_pos_printer_platform"
         const val EVENT_CHANNEL_USB = "com.cactus.flutter_pos_printer_platform/usb_state"
+        const val EVENT_CHANNEL_USB_DATA = "com.cactus.flutter_pos_printer_platform/usb_data"
     }
 }

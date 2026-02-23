@@ -16,7 +16,11 @@ class MethodChannelFlutterPosPrinter extends FlutterPosPrinterPlatform {
   @visibleForTesting
   final eventChannel = const EventChannel('com.cactus.flutter_pos_printer_platform/usb_state');
 
+  @visibleForTesting
+  final dataChannel = const EventChannel('com.cactus.flutter_pos_printer_platform/usb_data');
+
   Stream<USBStatus>? _statusStream;
+  Stream<List<int>>? _dataStream;
 
   @override
   Future<List<dynamic>> getDeviceList() async {
@@ -25,10 +29,10 @@ class MethodChannelFlutterPosPrinter extends FlutterPosPrinterPlatform {
   }
 
   @override
-  Future<bool> connect({String? name, String? vendorId, String? productId}) async {
+  Future<bool> connect({String? name, String? vendorId, String? productId, String? address}) async {
     if (Platform.isAndroid) {
       if (vendorId == null || productId == null) return false;
-      final params = {"vendor": int.tryParse(vendorId) ?? 0, "product": int.tryParse(productId) ?? 0};
+      final params = {"vendor": int.tryParse(vendorId) ?? 0, "product": int.tryParse(productId) ?? 0, "address": address};
       // Method channel returns boolean
       final bool? result = await methodChannel.invokeMethod<bool>('connectPrinter', params);
       return result ?? false;
@@ -60,6 +64,20 @@ class MethodChannelFlutterPosPrinter extends FlutterPosPrinterPlatform {
   }
 
   @override
+  Future<List<int>?> read({int timeout = 2000}) async {
+    try {
+      final params = {"timeout": timeout};
+      final result = await methodChannel.invokeMethod<List<dynamic>>('read', params);
+      if (result != null) {
+        return result.cast<int>();
+      }
+    } catch (e) {
+      debugPrint("Error reading from USB: $e");
+    }
+    return null;
+  }
+
+  @override
   Stream<USBStatus> get state {
     _statusStream ??= eventChannel.receiveBroadcastStream().map((event) {
       if (event is int) {
@@ -70,5 +88,16 @@ class MethodChannelFlutterPosPrinter extends FlutterPosPrinterPlatform {
       return USBStatus.none;
     }).asBroadcastStream();
     return _statusStream!;
+  }
+
+  @override
+  Stream<List<int>> get usbDataStream {
+    _dataStream ??= dataChannel.receiveBroadcastStream().map((event) {
+      if (event is List) {
+        return event.cast<int>();
+      }
+      return <int>[];
+    }).asBroadcastStream();
+    return _dataStream!;
   }
 }
