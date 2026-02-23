@@ -1,4 +1,5 @@
-import 'dart:async';
+import 'dart:async' show Stream;
+import 'package:async/async.dart' show StreamGroup;
 import 'dart:io';
 
 class NetworkAddress {
@@ -49,5 +50,30 @@ class NetworkAnalyzer {
     } catch (e) {
       return NetworkAddress(ip, false);
     }
+  }
+
+  /// Returns a list of streams for each existing network interface
+  static Future<Stream<NetworkAddress>> discoverAllLocal({int port = 9100}) async {
+    final streams = await _getAllLocalNetworks().then((address) =>
+        address.map((address) => _getNetworkStream(address, port)).whereType<Stream<NetworkAddress>>().toList());
+    return StreamGroup.merge(streams);
+  }
+
+  // Returns all ip addresses that needs to be checked for connection of all network interfaces
+  static Future<List<String>> _getAllLocalNetworks() async {
+    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: true);
+    return interfaces.expand((e) => e.addresses.map((element) => element.address)).toList();
+  }
+
+  static Stream<NetworkAddress>? _getNetworkStream(String address, int port) {
+    Stream<NetworkAddress>? stream;
+    try {
+      final subnet = address.substring(0, address.lastIndexOf('.'));
+      // internally this method opens a socket with each ip address to test if there is connection
+      stream = discover(subnet, port, timeout: const Duration(milliseconds: 200));
+    } catch (error) {
+      print('Error at NetworkScanner._getSubnetStream: $error');
+    }
+    return stream;
   }
 }

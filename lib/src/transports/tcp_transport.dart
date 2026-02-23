@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'printer_transport.dart';
 import 'package:flutter_pos_printer_platform_image_3/src/enums.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import '../utils/network_analyzer.dart';
 import '../models/printer_device.dart';
 import '../printer_info.dart';
@@ -160,26 +159,7 @@ class TcpTransport extends PrinterTransport {
   }) async* {
     print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
-    String? deviceIp;
-    if (Platform.isAndroid || Platform.isIOS) {
-      deviceIp = await NetworkInfo().getWifiIP();
-      print("Device IP obtained: $deviceIp");
-    } else if (ipAddress != null) {
-      deviceIp = ipAddress;
-    } else {
-      print("No IP address found for discovery.");
-      return;
-    }
-
-    if (deviceIp == null) {
-      print("Device IP is null, aborting discovery.");
-      return;
-    }
-
-    final String subnet = deviceIp.substring(0, deviceIp.lastIndexOf('.'));
-    print("Scanning subnet: $subnet");
-
-    final stream = NetworkAnalyzer.discover(subnet, port);
+    final stream = await NetworkAnalyzer.discoverAllLocal(port: port);
 
     await for (var data in stream) {
       if (data.exists) {
