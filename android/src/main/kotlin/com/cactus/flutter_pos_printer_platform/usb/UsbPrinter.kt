@@ -126,7 +126,7 @@ class UsbPrinter(
     // =====================================================
 
     private fun startReadThread() {
-        if (epIn == null) return
+        if (epIn == null || reading.get()) return
 
         reading.set(true)
 
