@@ -8,26 +8,33 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.util.Log
 
-class UsbReceiver : BroadcastReceiver() {
+class UsbReceiver(private val manager: UsbPrinterManager? = null) : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         if (intent == null) return
-        Log.d("UsbReceiver", "Inside USB Broadcast action ${intent.action}")
-
         val action = intent.action
-        if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+        Log.d("UsbReceiver", "Inside USB Broadcast action $action")
 
-            val usbDevice: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        val usbDevice: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        if (usbDevice == null) return
 
-            val intentPermission = Intent("com.flutter_pos_printer.USB_PERMISSION")
-            intentPermission.setPackage(context?.packageName)
-            val mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_MUTABLE)
-            } else {
-                PendingIntent.getBroadcast(context, 0, intentPermission, 0)
+        when (action) {
+            UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                val intentPermission = Intent("com.flutter_pos_printer.USB_PERMISSION")
+                intentPermission.setPackage(context?.packageName)
+                val mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_MUTABLE)
+                } else {
+                    PendingIntent.getBroadcast(context, 0, intentPermission, 0)
+                }
+                val mUSBManager = context?.getSystemService(Context.USB_SERVICE) as UsbManager?
+                mUSBManager?.requestPermission(usbDevice, mPermissionIndent)
             }
-            val mUSBManager = context?.getSystemService(Context.USB_SERVICE) as UsbManager?
-            mUSBManager?.requestPermission(usbDevice, mPermissionIndent)
 
+            UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                Log.d("UsbReceiver", "USB Device detached: ${usbDevice.deviceName}")
+                manager?.onUsbDetached(usbDevice)
+            }
         }
     }
 }
+

@@ -8,11 +8,14 @@ import android.os.Looper
 import android.os.Message
 import android.util.Log
 import androidx.annotation.NonNull
+import android.content.IntentFilter
 import com.cactus.flutter_pos_printer_platform.usb.UsbPrinterManager
+import com.cactus.flutter_pos_printer_platform.usb.UsbReceiver
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.*
+
 
 class FlutterPosPrinterPlatformPlugin :
     FlutterPlugin,
@@ -32,6 +35,8 @@ class FlutterPosPrinterPlatformPlugin :
     private var dataSink: EventChannel.EventSink? = null
 
     private lateinit var printerManager: UsbPrinterManager
+    private var usbReceiver: UsbReceiver? = null
+
 
     companion object {
         const val METHOD_CHANNEL = "com.cactus.flutter_pos_printer_platform"
@@ -111,11 +116,24 @@ class FlutterPosPrinterPlatformPlugin :
         activity = binding.activity
         context = binding.activity.applicationContext
         printerManager = UsbPrinterManager(context!!, usbHandler)
+        
+        // Register USB Receiver
+        usbReceiver = UsbReceiver(printerManager)
+        val filter = IntentFilter().apply {
+            addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        context!!.registerReceiver(usbReceiver, filter)
     }
 
     override fun onDetachedFromActivity() {
+        usbReceiver?.let {
+            context?.unregisterReceiver(it)
+        }
+        usbReceiver = null
         activity = null
     }
+
 
     override fun onDetachedFromActivityForConfigChanges() {
         activity = null
