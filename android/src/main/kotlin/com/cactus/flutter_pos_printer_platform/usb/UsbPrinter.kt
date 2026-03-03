@@ -23,6 +23,8 @@ class UsbPrinter(
     private var reading = false
     private var readThread: Thread? = null
 
+    fun isConnected(): Boolean = connection != null
+
     fun connect(): Boolean {
         Log.d("UsbPrinter", "connect() called for ${device.deviceName}")
         if (connection != null) {

@@ -20,6 +20,8 @@ class UsbPrinterManager(
         return usbManager.deviceList.values.toList()
     }
 
+    fun isConnected(address: String): Boolean = printers[address]?.isConnected() ?: false
+
     fun connect(address: String): Boolean {
         Log.d("UsbPrinterManager", "Connecting to address: $address")
         if (printers.containsKey(address)) {

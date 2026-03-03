@@ -77,6 +77,7 @@ class UsbTransport extends PrinterTransport {
         final vendorId = device['vendorId']?.toString();
         final productId = device['productId']?.toString();
         final address = device['name']?.toString();
+        final bool wasConnected = device['connected'] == true;
         
         var mappedDevice = PrinterDevice(
           name: device['product'] ?? device['name'] ?? 'Unknown',
@@ -88,19 +89,20 @@ class UsbTransport extends PrinterTransport {
         );
 
         if (resolveIdentity && address != null) {
-          // final info = await _getPrinterInfoInternal(address: address);
-          // if (info?.serialNumber != null) {
-          //     mappedDevice.serialNumber = info?.serialNumber;
-          // }
-          // if (info?.model != null) {
-          //     mappedDevice.model = info?.model;
-          // }
-          // if (info?.manufacturer != null && info?.manufacturer != 'Unknown') {
-          //     mappedDevice.manufacturer = info?.manufacturer;
-          // }
+          final info = await _getPrinterInfoInternal(address: address, wasConnected: wasConnected);
+          if (info?.serialNumber != null) {
+              mappedDevice.serialNumber = info?.serialNumber;
+          }
+          if (info?.model != null) {
+              mappedDevice.model = info?.model;
+          }
+          if (info?.manufacturer != null && info?.manufacturer != 'Unknown') {
+              mappedDevice.manufacturer = info?.manufacturer;
+          }
         }
 
         yield mappedDevice;
+
       }
     }
   }
@@ -108,12 +110,14 @@ class UsbTransport extends PrinterTransport {
   static Future<PrinterInfo?> getPrinterInfo({
     required String address,
   }) {
-    return _getPrinterInfoInternal( address: address);
+    return _getPrinterInfoInternal(address: address, wasConnected: false);
   }
 
   static Future<PrinterInfo?> _getPrinterInfoInternal({
     required String address,
+    required bool wasConnected,
   }) async {
+
     final platform = FlutterPosPrinterPlatform.instance;
     final bool connected = await platform.connect(address: address);
     
@@ -146,9 +150,13 @@ class UsbTransport extends PrinterTransport {
       return null;
     } finally {
       await subscription.cancel();
-      await platform.disconnect(address: address);
+      // Only disconnect if it wasn't connected before we started the identity resolution
+      if (!wasConnected) {
+        await platform.disconnect(address: address);
+      }
     }
   }
+
 
   /// Waits for data to arrive in the buffer and settles for a short window.
   static Future<String?> _waitForResponse(List<int> buffer, {int timeoutMs = 2000}) async {

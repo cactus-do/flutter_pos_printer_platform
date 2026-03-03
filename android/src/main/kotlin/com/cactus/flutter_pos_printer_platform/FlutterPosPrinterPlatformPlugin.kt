@@ -139,8 +139,10 @@ class FlutterPosPrinterPlatformPlugin :
                         "name" to d.deviceName,
                         "manufacturer" to d.manufacturerName,
                         "product" to d.productName,
+                        "connected" to printerManager.isConnected(d.deviceName)
                     )
                 }
+
 
                 result.success(list)
             }
