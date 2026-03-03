@@ -6,6 +6,9 @@ import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import java.nio.charset.Charset
+import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 class UsbPrinter(
     private val context: Context,
@@ -19,23 +22,176 @@ class UsbPrinter(
     private var epOut: UsbEndpoint? = null
     private var epIn: UsbEndpoint? = null
 
-    private val lock = Any()
-    private var reading = false
+    // ======= Worker infra =======
+    private val writeQueue = LinkedBlockingQueue<ByteArray>(500)
+    private var writeExecutor: java.util.concurrent.ExecutorService? = null
+    private val running = AtomicBoolean(false)
+
+
     private var readThread: Thread? = null
+    private val reading = AtomicBoolean(false)
 
     fun isConnected(): Boolean = connection != null
 
+    // =====================================================
+    // CONNECT
+    // =====================================================
+
     fun connect(): Boolean {
-        Log.d("UsbPrinter", "connect() called for ${device.deviceName}")
-        if (connection != null) {
-            Log.d("UsbPrinter", "Already connected to ${device.deviceName}")
-            return true
+        if (connection != null) return true
+
+        if (!findEndpoints()) {
+            Log.e("UsbPrinter", "No bulk endpoint found")
+            return false
         }
 
-        Log.d("UsbPrinter", "Device has ${device.interfaceCount} interfaces")
+        val conn = usbManager.openDevice(device) ?: return false
+
+        if (!conn.claimInterface(iface!!, true)) {
+            conn.close()
+            return false
+        }
+
+        connection = conn
+        startWriteWorker()
+        startReadThread()
+
+        notifyState(2) // Connected
+        return true
+    }
+
+    // =====================================================
+    // PRINT API
+    // =====================================================
+
+    fun printText(text: String): Boolean =
+        enqueue(text.toByteArray(Charset.forName("UTF-8")))
+
+    fun printRaw(base64: String): Boolean =
+        enqueue(Base64.decode(base64, Base64.DEFAULT))
+
+    fun printBytes(bytes: ArrayList<Int>): Boolean =
+        enqueue(bytes.map { it.toByte() }.toByteArray())
+
+    private fun enqueue(data: ByteArray): Boolean {
+        if (!running.get()) return false
+        val success = writeQueue.offer(data)
+        if (!success) {
+            Log.e("UsbPrinter", "Write queue full, dropping data")
+        }
+        return success
+    }
+
+
+    // =====================================================
+    // WRITE WORKER
+    // =====================================================
+
+    private fun startWriteWorker() {
+        if (running.get()) return
+        running.set(true)
+
+        if (writeExecutor == null || writeExecutor!!.isShutdown) {
+            writeExecutor = Executors.newSingleThreadExecutor()
+        }
+
+        writeExecutor?.execute {
+
+            while (running.get()) {
+                try {
+                    val data = writeQueue.take()
+                    writeInternal(data)
+                } catch (e: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    Log.e("UsbPrinter", "Write error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun writeInternal(data: ByteArray) {
+        val conn = connection ?: return
+        val out = epOut ?: return
+
+        val res = conn.bulkTransfer(out, data, data.size, 10_000)
+
+        if (res < 0) {
+            Log.e("UsbPrinter", "bulkTransfer failed")
+        }
+    }
+
+    // =====================================================
+    // READ THREAD
+    // =====================================================
+
+    private fun startReadThread() {
+        if (epIn == null) return
+
+        reading.set(true)
+
+        readThread = Thread {
+            val buffer = ByteArray(1024)
+
+            while (reading.get()) {
+                try {
+                    val conn = connection ?: break
+                    val bytes = conn.bulkTransfer(epIn, buffer, buffer.size, 200)
+
+                    if (bytes > 0) {
+                        handler.obtainMessage(
+                            2,
+                            mapOf(
+                                "address" to device.deviceName,
+                                "data" to buffer.copyOf(bytes)
+                            )
+                        ).sendToTarget()
+                    }
+                } catch (e: Exception) {
+                    break
+                }
+            }
+        }
+
+        readThread?.start()
+    }
+
+    private fun stopReadThread() {
+        reading.set(false)
+        readThread?.interrupt()
+        readThread = null
+    }
+
+    // =====================================================
+    // CLOSE
+    // =====================================================
+
+    fun close() {
+        running.set(false)
+        writeExecutor?.shutdownNow()
+        writeExecutor = null
+        writeQueue.clear()
+
+
+        stopReadThread()
+
+        connection?.releaseInterface(iface)
+        connection?.close()
+        connection = null
+
+        notifyState(0) // Disconnected
+    }
+
+    // =====================================================
+    // ENDPOINT DISCOVERY
+    // =====================================================
+
+    private fun findEndpoints(): Boolean {
+        Log.d("UsbPrinter", "Scanning ${device.interfaceCount} interfaces for ${device.deviceName}")
         for (i in 0 until device.interfaceCount) {
             val intf = device.getInterface(i)
-            Log.d("UsbPrinter", "Interface $i: class=${intf.interfaceClass}, subclass=${intf.interfaceSubclass}, protocol=${intf.interfaceProtocol}, endpoints=${intf.endpointCount}")
+            Log.d("UsbPrinter", "Interface $i: class=${intf.interfaceClass}, subclass=${intf.interfaceSubclass}, protocol=${intf.interfaceProtocol}")
+
             var out: UsbEndpoint? = null
             var `in`: UsbEndpoint? = null
 
@@ -52,90 +208,22 @@ class UsbPrinter(
                 iface = intf
                 epOut = out
                 epIn = `in`
-                Log.d("UsbPrinter", "Selected Interface $i and bulk out endpoint: ${epOut?.address}")
-                break
+                Log.d("UsbPrinter", "Selected Interface $i (Class: ${intf.interfaceClass}) and Bulk OUT: ${epOut?.address}")
+                return true
             }
         }
-
-
-        if (iface == null || epOut == null) {
-            Log.e("UsbPrinter", "No bulk out endpoint found for ${device.deviceName}")
-            return false
-        }
-
-        Log.d("UsbPrinter", "Opening device: ${device.deviceName}")
-        val conn = usbManager.openDevice(device) ?: run {
-            Log.e("UsbPrinter", "Could not open device (permission denied?): ${device.deviceName}")
-            return false
-        }
-        
-        Log.d("UsbPrinter", "Claiming interface: ${iface?.id}")
-        if (!conn.claimInterface(iface!!, true)) {
-            Log.e("UsbPrinter", "Could not claim interface for ${device.deviceName}")
-            conn.close()
-            return false
-        }
-
-        connection = conn
-        startReadThread()
-        Log.d("UsbPrinter", "Connection established, sending MSG_STATE for ${device.deviceName}")
-        // Notify connected: MSG_STATE (1), state: Connected (2)
-        handler.obtainMessage(1, mapOf("address" to device.deviceName, "state" to 2)).sendToTarget()
-        return true
+        Log.e("UsbPrinter", "No bulk OUT endpoint found after scanning all interfaces")
+        return false
     }
 
 
-    fun close() {
-        stopReadThread()
-        connection?.releaseInterface(iface)
-        connection?.close()
-        connection = null
-        // Notify disconnected: MSG_STATE (1), state: Disconnected (0)
-        handler.obtainMessage(1, mapOf("address" to device.deviceName, "state" to 0)).sendToTarget()
-    }
-
-    fun printText(text: String): Boolean =
-        write(text.toByteArray(Charset.forName("UTF-8")))
-
-    fun printRaw(base64: String): Boolean =
-        write(Base64.decode(base64, Base64.DEFAULT))
-
-    fun printBytes(bytes: ArrayList<Int>): Boolean =
-        write(bytes.map { it.toByte() }.toByteArray())
-
-    private fun write(data: ByteArray): Boolean {
-        synchronized(lock) {
-            val conn = connection ?: return false
-            val out = epOut ?: return false
-            val res = conn.bulkTransfer(out, data, data.size, 10_000)
-            return res >= 0
-        }
-    }
-
-    private fun startReadThread() {
-        if (epIn == null || reading) return
-        reading = true
-
-        readThread = Thread {
-            val buffer = ByteArray(1024)
-            while (reading) {
-                val conn = connection ?: break
-                val bytes = conn.bulkTransfer(epIn, buffer, buffer.size, 200)
-                if (bytes > 0) {
-                    val dataMap = mapOf(
-                        "address" to device.deviceName,
-                        "data" to buffer.copyOf(bytes)
-                    )
-                    handler.obtainMessage(2, dataMap).sendToTarget()
-                }
-            }
-        }
-        readThread?.start()
-    }
-
-    private fun stopReadThread() {
-        reading = false
-        readThread?.interrupt()
-        readThread = null
+    private fun notifyState(state: Int) {
+        handler.obtainMessage(
+            1,
+            mapOf(
+                "address" to device.deviceName,
+                "state" to state
+            )
+        ).sendToTarget()
     }
 }
