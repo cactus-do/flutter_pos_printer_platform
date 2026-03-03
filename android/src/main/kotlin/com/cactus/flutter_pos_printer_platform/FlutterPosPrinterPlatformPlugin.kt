@@ -8,262 +8,195 @@ import android.os.Looper
 import android.os.Message
 import android.util.Log
 import androidx.annotation.NonNull
-import com.cactus.flutter_pos_printer_platform.usb.USBPrinterService
+import com.cactus.flutter_pos_printer_platform.usb.UsbPrinterManager
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.*
 
-/** FlutterPosPrinterPlatformPlugin — USB-only (V2.0) */
-class FlutterPosPrinterPlatformPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
+class FlutterPosPrinterPlatformPlugin :
+    FlutterPlugin,
+    MethodChannel.MethodCallHandler,
+    ActivityAware {
 
-    private val TAG = "FlutterPosPrinterPlatformPlugin"
+    private val TAG = "FlutterPosPrinterPlugin"
 
-    private var binaryMessenger: BinaryMessenger? = null
-    private var channel: MethodChannel? = null
-    private var messageUSBChannel: EventChannel? = null
-    private var eventUSBSink: EventChannel.EventSink? = null
-    private var dataUSBChannel: EventChannel? = null
-    private var eventDataSink: EventChannel.EventSink? = null
     private var context: Context? = null
-    private var currentActivity: Activity? = null
-    lateinit var adapter: USBPrinterService
+    private var activity: Activity? = null
 
-    private val usbHandler = object : Handler(Looper.getMainLooper()) {
-        override fun handleMessage(msg: Message) {
-            super.handleMessage(msg)
-            when (msg.what) {
-                USBPrinterService.STATE_USB_CONNECTED -> {
-                    eventUSBSink?.success(2)
-                }
-                USBPrinterService.STATE_USB_CONNECTING -> {
-                    eventUSBSink?.success(1)
-                }
-                USBPrinterService.STATE_USB_NONE -> {
-                    eventUSBSink?.success(0)
-                }
-                USBPrinterService.DATA_READ -> {
-                    val data = msg.obj as ByteArray
-                    Log.d(TAG, "Plugin received raw data from Service: ${data.size} bytes")
-                    val intList = data.map { it.toInt() }
-                    eventDataSink?.success(intList)
-                }
-            }
-        }
-    }
+    private lateinit var methodChannel: MethodChannel
+    private lateinit var stateChannel: EventChannel
+    private lateinit var dataChannel: EventChannel
 
-    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        Log.d(TAG, "onAttachedToEngine")
-        binaryMessenger = flutterPluginBinding.binaryMessenger
-    }
+    private var stateSink: EventChannel.EventSink? = null
+    private var dataSink: EventChannel.EventSink? = null
 
-    override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
-        Log.d(TAG, "onDetachedFromEngine")
-        channel?.setMethodCallHandler(null)
-        messageUSBChannel?.setStreamHandler(null)
-        messageUSBChannel = null
-        dataUSBChannel?.setStreamHandler(null)
-        dataUSBChannel = null
-        if (::adapter.isInitialized) {
-            adapter.setHandler(null)
-        }
-    }
-
-    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        Log.d(TAG, "onAttachedToActivity")
-
-        context = binding.activity.applicationContext
-        currentActivity = binding.activity
-
-        channel = MethodChannel(binaryMessenger!!, METHOD_CHANNEL)
-        channel!!.setMethodCallHandler(this)
-
-        messageUSBChannel = EventChannel(binaryMessenger!!, EVENT_CHANNEL_USB)
-        messageUSBChannel?.setStreamHandler(object : EventChannel.StreamHandler {
-            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
-                eventUSBSink = sink
-            }
-            override fun onCancel(p0: Any?) {
-                eventUSBSink = null
-            }
-        })
-
-        dataUSBChannel = EventChannel(binaryMessenger!!, EVENT_CHANNEL_USB_DATA)
-        dataUSBChannel?.setStreamHandler(object : EventChannel.StreamHandler {
-            override fun onListen(p0: Any?, sink: EventChannel.EventSink) {
-                eventDataSink = sink
-            }
-            override fun onCancel(p0: Any?) {
-                eventDataSink = null
-            }
-        })
-
-        adapter = USBPrinterService.getInstance(usbHandler)
-        adapter.init(context)
-    }
-
-    override fun onDetachedFromActivityForConfigChanges() {
-        Log.d(TAG, "onDetachedFromActivityForConfigChanges")
-        currentActivity = null
-    }
-
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        Log.d(TAG, "onReattachedToActivityForConfigChanges")
-        currentActivity = binding.activity
-    }
-
-    override fun onDetachedFromActivity() {
-        Log.d(TAG, "onDetachedFromActivity")
-        currentActivity = null
-    }
-
-    override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
-        Log.d(TAG, "method call: ${call.method}")
-        when (call.method) {
-            "getList" -> {
-                getUSBDeviceList(result)
-            }
-            "connectPrinter" -> {
-                val vendor: Int? = call.argument("vendor")
-                val product: Int? = call.argument("product")
-                val address: String? = call.argument("address")
-                connectPrinter(vendor, product, address, result)
-            }
-            "close" -> {
-                closeConn(result)
-            }
-            "printText" -> {
-                val text: String? = call.argument("text")
-                printText(text, result)
-            }
-            "printRawData" -> {
-                val raw: String? = call.argument("raw")
-                printRawData(raw, result)
-            }
-            "printBytes" -> {
-                val bytesArg = call.argument<Any>("bytes")
-                val bytes: ArrayList<Int>? = if (bytesArg is ByteArray) {
-                    val list = ArrayList<Int>(bytesArg.size)
-                    for (b in bytesArg) {
-                        list.add(b.toInt())
-                    }
-                    list
-                } else {
-                    @Suppress("UNCHECKED_CAST")
-                    bytesArg as? ArrayList<Int>
-                }
-                printBytes(bytes, result)
-            }
-            "read" -> {
-                val timeout: Int? = call.argument("timeout")
-                readBytes(timeout, result)
-            }
-            else -> {
-                result.notImplemented()
-            }
-        }
-    }
-
-    private fun getUSBDeviceList(result: Result) {
-        val list = ArrayList<HashMap<*, *>>()
-        val usbDevices: List<UsbDevice> = adapter.deviceList
-        for (usbDevice in usbDevices) {
-            val deviceMap: HashMap<String?, String?> = HashMap()
-            deviceMap["name"] = usbDevice.deviceName
-            deviceMap["manufacturer"] = usbDevice.manufacturerName
-            deviceMap["product"] = usbDevice.productName
-            deviceMap["deviceId"] = usbDevice.deviceId.toString()
-            deviceMap["vendorId"] = usbDevice.vendorId.toString()
-            deviceMap["productId"] = usbDevice.productId.toString()
-            list.add(deviceMap)
-        }
-        result.success(list)
-    }
-
-    private fun connectPrinter(vendorId: Int?, productId: Int?, address: String?, result: Result) {
-        if (vendorId == null || productId == null) return
-        adapter.setHandler(usbHandler)
-        if (!adapter.selectDevice(vendorId, productId, address)) {
-            Log.d("USBPrinterService", "Could not select device: vendorId=$vendorId, productId=$productId, address=$address")
-            result.success(false)
-        } else {
-            Log.d("USBPrinterService", "Successfully selected device: vendorId=$vendorId, productId=$productId, address=$address")
-            result.success(true)
-        }
-    }
-
-    private fun closeConn(result: Result) {
-        adapter.setHandler(usbHandler)
-        adapter.closeConnectionIfExists()
-        result.success(true)
-    }
-
-    private fun printText(text: String?, result: Result) {
-        if (text.isNullOrEmpty()) {
-            result.success(false)
-            return
-        }
-        Thread {
-            adapter.setHandler(usbHandler)
-            val success = adapter.printText(text)
-            Handler(Looper.getMainLooper()).post {
-                result.success(success)
-            }
-        }.start()
-    }
-
-    private fun printRawData(base64Data: String?, result: Result) {
-        if (base64Data.isNullOrEmpty()) {
-            result.success(false)
-            return
-        }
-        Thread {
-            adapter.setHandler(usbHandler)
-            val success = adapter.printRawData(base64Data)
-            Handler(Looper.getMainLooper()).post {
-                result.success(success)
-            }
-        }.start()
-    }
-
-    private fun printBytes(bytes: ArrayList<Int>?, result: Result) {
-        if (bytes == null) {
-            result.success(false)
-            return
-        }
-        Thread {
-            adapter.setHandler(usbHandler)
-            val success = adapter.printBytes(bytes)
-            Handler(Looper.getMainLooper()).post {
-                result.success(success)
-            }
-        }.start()
-    }
-
-    private fun readBytes(timeout: Int?, result: Result) {
-        Thread {
-            adapter.setHandler(usbHandler)
-            val t = timeout ?: 2000
-            val data = adapter.readBytes(t)
-            Handler(Looper.getMainLooper()).post {
-                if (data != null) {
-                    val intList = data.map { it.toInt() }
-                    result.success(intList)
-                } else {
-                    result.success(null)
-                }
-            }
-        }.start()
-    }
+    private lateinit var printerManager: UsbPrinterManager
 
     companion object {
         const val METHOD_CHANNEL = "com.cactus.flutter_pos_printer_platform"
-        const val EVENT_CHANNEL_USB = "com.cactus.flutter_pos_printer_platform/usb_state"
-        const val EVENT_CHANNEL_USB_DATA = "com.cactus.flutter_pos_printer_platform/usb_data"
+        const val EVENT_USB_STATE = "com.cactus.flutter_pos_printer_platform/usb_state"
+        const val EVENT_USB_DATA = "com.cactus.flutter_pos_printer_platform/usb_data"
+
+        const val MSG_STATE = 1
+        const val MSG_DATA = 2
+    }
+
+    /** Handler que recibe eventos desde CADA UsbPrinter */
+    private val usbHandler = object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            when (msg.what) {
+
+                MSG_STATE -> {
+                    val map = msg.obj as Map<*, *>
+                    stateSink?.success(
+                        mapOf(
+                            "address" to map["address"],
+                            "state" to map["state"]
+                        )
+                    )
+                }
+
+                MSG_DATA -> {
+                    val map = msg.obj as Map<*, *>
+                    val bytes = map["data"] as ByteArray
+                    dataSink?.success(
+                        mapOf(
+                            "address" to map["address"],
+                            "data" to bytes.map { it.toInt() }
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /* ================= Flutter lifecycle ================= */
+
+    override fun onAttachedToEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        methodChannel = MethodChannel(binding.binaryMessenger, METHOD_CHANNEL)
+        methodChannel.setMethodCallHandler(this)
+
+        stateChannel = EventChannel(binding.binaryMessenger, EVENT_USB_STATE)
+        dataChannel = EventChannel(binding.binaryMessenger, EVENT_USB_DATA)
+
+        stateChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                stateSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                stateSink = null
+            }
+        })
+
+        dataChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                dataSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                dataSink = null
+            }
+        })
+    }
+
+    override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        methodChannel.setMethodCallHandler(null)
+        stateSink = null
+        dataSink = null
+    }
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        context = binding.activity.applicationContext
+        printerManager = UsbPrinterManager(context!!, usbHandler)
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+    }
+
+    /* ================= MethodChannel ================= */
+
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+
+            "getList" -> {
+                val list = printerManager.listDevices().map { d ->
+                    mapOf(
+                        "deviceId" to d.deviceId.toString(),
+                        "vendorId" to d.vendorId,
+                        "productId" to d.productId,
+                        "name" to d.deviceName,
+                        "manufacturer" to d.manufacturerName,
+                        "product" to d.productName,
+                    )
+                }
+
+                result.success(list)
+            }
+
+            "connectPrinter" -> {
+                val address = call.argument<String>("address")
+                if (address == null) {
+                    result.success(false)
+                    return
+                }
+                result.success(printerManager.connect(address))
+            }
+
+
+            "disconnectPrinter" -> {
+                val address = call.argument<String>("address")
+                if (address == null) {
+                    result.success(false)
+                    return
+                }
+                printerManager.disconnect(address)
+                result.success(true)
+            }
+
+            "printText" -> {
+                val address = call.argument<String>("address")
+                val text = call.argument<String>("text")
+                if (address == null || text == null) {
+                    result.success(false)
+                    return
+                }
+                result.success(printerManager.printText(address, text))
+            }
+
+            "printRawData" -> {
+                val address = call.argument<String>("address")
+                val raw = call.argument<String>("raw")
+                if (address == null || raw == null) {
+                    result.success(false)
+                    return
+                }
+                result.success(printerManager.printRaw(address, raw))
+            }
+
+            "printBytes" -> {
+                val address = call.argument<String>("address")
+                val bytes = call.argument<ArrayList<Int>>("bytes")
+                if (address == null || bytes == null) {
+                    result.success(false)
+                    return
+                }
+                result.success(printerManager.printBytes(address, bytes))
+            }
+
+
+            else -> result.notImplemented()
+        }
     }
 }

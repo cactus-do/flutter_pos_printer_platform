@@ -6,39 +6,41 @@ import '../printer_info.dart';
 import 'printer_transport.dart';
 
 class UsbTransport extends PrinterTransport {
-  final String? vendorId;
-  final String? productId;
   final String? name;
   final String? address;
 
-  UsbTransport({this.vendorId, this.productId, this.name, this.address});
+  UsbTransport({this.name, this.address});
 
   final _platform = FlutterPosPrinterPlatform.instance;
 
   @override
   Future<bool> connect() async {
-    return await _platform.connect(
-      name: name,
-      vendorId: vendorId,
-      productId: productId,
-      address: address,
-    );
+    final deviceId = address;
+    if (deviceId == null) return false;
+    
+    return await _platform.connect(address: deviceId);
   }
 
   @override
   Future<bool> disconnect() async {
-    return await _platform.disconnect();
+    final deviceId = address;
+    if (deviceId == null) return false;
+    
+    return await _platform.disconnect(address: deviceId);
   }
 
   @override
   Future<bool> write(List<int> bytes) async {
-    return await _platform.write(bytes);
+    final deviceId = address;
+    if (deviceId == null) return false;
+    
+    return await _platform.write(address: deviceId, bytes: bytes);
   }
 
   @override
   Stream<PosPrinterConnectionState> get state {
-    return _platform.state.map((status) {
-      switch (status) {
+    return _platform.state.map((state) {
+      switch (state.status) {
         case USBStatus.connected:
           return PosPrinterConnectionState.connected;
         case USBStatus.connecting:
@@ -62,10 +64,13 @@ class UsbTransport extends PrinterTransport {
   }
 
   Future<List<int>?> read({int timeout = 2000}) async {
-    return await _platform.read(timeout: timeout);
+    final deviceId = address;
+    if (deviceId == null) return null;
+    
+    return await _platform.read(address: deviceId, timeout: timeout);
   }
 
-  static Stream<PrinterDevice> discovery({bool resolveIdentity = true}) async* {
+  static Stream<PrinterDevice> discovery({bool resolveIdentity = false}) async* {
     final results = await FlutterPosPrinterPlatform.instance.getDeviceList();
     for (final device in results) {
       if (device is Map) {
@@ -82,17 +87,17 @@ class UsbTransport extends PrinterTransport {
           // Windows might map differently
         );
 
-        if (resolveIdentity && vendorId != null && productId != null) {
-          final info = await _getPrinterInfoInternal(vendorId: vendorId, productId: productId, address: address);
-          if (info?.serialNumber != null) {
-              mappedDevice.serialNumber = info?.serialNumber;
-          }
-          if (info?.model != null) {
-              mappedDevice.model = info?.model;
-          }
-          if (info?.manufacturer != null && info?.manufacturer != 'Unknown') {
-              mappedDevice.manufacturer = info?.manufacturer;
-          }
+        if (resolveIdentity && address != null) {
+          // final info = await _getPrinterInfoInternal(address: address);
+          // if (info?.serialNumber != null) {
+          //     mappedDevice.serialNumber = info?.serialNumber;
+          // }
+          // if (info?.model != null) {
+          //     mappedDevice.model = info?.model;
+          // }
+          // if (info?.manufacturer != null && info?.manufacturer != 'Unknown') {
+          //     mappedDevice.manufacturer = info?.manufacturer;
+          // }
         }
 
         yield mappedDevice;
@@ -101,42 +106,34 @@ class UsbTransport extends PrinterTransport {
   }
 
   static Future<PrinterInfo?> getPrinterInfo({
-    required String vendorId,
-    required String productId,
     required String address,
   }) {
-    return _getPrinterInfoInternal(vendorId: vendorId, productId: productId, address: address);
+    return _getPrinterInfoInternal( address: address);
   }
 
   static Future<PrinterInfo?> _getPrinterInfoInternal({
-    String? vendorId,
-    String? productId,
-    String? address,
+    required String address,
   }) async {
     final platform = FlutterPosPrinterPlatform.instance;
-    final bool connected = await platform.connect(
-      vendorId: vendorId,
-      productId: productId,
-      address: address,
-    );
+    final bool connected = await platform.connect(address: address);
     
     if (!connected) return null;
 
     final List<int> accumulatedData = [];
-    final subscription = platform.usbDataStream.listen((data) {
-      accumulatedData.addAll(data);
+    final subscription = platform.usbDataStream.listen((event) {
+      accumulatedData.addAll(event.data);
     });
 
     try {
       // 1. Get Model
-      await platform.write([0x1D, 0x49, 0x43]);
+      await platform.write(address: address, bytes: [0x1D, 0x49, 0x43]);
       final model = await _waitForResponse(accumulatedData);
       
       accumulatedData.clear();
       await Future.delayed(const Duration(milliseconds: 150));
 
       // 2. Get Serial
-      await platform.write([0x1D, 0x49, 0x44]);
+      await platform.write(address: address, bytes: [0x1D, 0x49, 0x44]);
       final serial = await _waitForResponse(accumulatedData);
       
       return PrinterInfo(
@@ -149,7 +146,7 @@ class UsbTransport extends PrinterTransport {
       return null;
     } finally {
       await subscription.cancel();
-      await platform.disconnect();
+      await platform.disconnect(address: address);
     }
   }
 

@@ -29,36 +29,58 @@ abstract class FlutterPosPrinterPlatform extends PlatformInterface {
   }
 
   /// Connect to a USB printer.
-  ///
-  /// [vendorId] and [productId] are required for Android.
-  /// [name] is required for Windows.
-  /// [address] is the port path / device name for Android (e.g. /dev/bus/usb/...).
-  Future<bool> connect({String? name, String? vendorId, String? productId, String? address}) {
+  Future<bool> connect({required String? address}) {
     throw UnimplementedError('connect() has not been implemented.');
   }
 
   /// Disconnect from the current USB printer.
-  Future<bool> disconnect() {
+  Future<bool> disconnect({required String? address}) {
     throw UnimplementedError('disconnect() has not been implemented.');
   }
 
   /// Write data to the connected USB printer.
-  Future<bool> write(List<int> bytes) {
+  Future<bool> write({required String? address, required List<int> bytes}) {
     throw UnimplementedError('write() has not been implemented.');
   }
 
+  /// Write text to the connected USB printer.
+  Future<bool> writeText({required String? address, required String text}) {
+    throw UnimplementedError('writeText() has not been implemented.');
+  }
+
   /// Read data from the connected USB printer.
-  Future<List<int>?> read({int timeout = 2000}) {
+  Future<List<int>?> read({required String? address, int timeout = 2000}) {
     throw UnimplementedError('read() has not been implemented.');
   }
 
   /// Stream of raw data received from the USB printer.
-  Stream<List<int>> get usbDataStream {
+  Stream<USBDataEvent> get usbDataStream {
     throw UnimplementedError('usbDataStream has not been implemented.');
   }
 
   /// Stream of USB connection status.
-  Stream<USBStatus> get state {
+  Stream<USBStatusEvent> get state {
     throw UnimplementedError('state has not been implemented.');
   }
+}
+
+
+class USBStatusEvent {
+  final String address;
+  final USBStatus status;
+
+  USBStatusEvent({
+    required this.address,
+    required this.status,
+  });
+}
+
+class USBDataEvent {
+  final String address;
+  final List<int> data;
+
+  USBDataEvent({
+    required this.address,
+    required this.data,
+  });
 }

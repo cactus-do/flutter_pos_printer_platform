@@ -53,7 +53,7 @@ class _MyAppState extends State<MyApp> {
 
     // We use the driver's discovery directly
     final stream = (defaultPrinterType == PrinterType.usb)
-        ? UsbTransport.discovery()
+        ? UsbTransport.discovery(resolveIdentity: true)
         : TcpTransport.discovery(resolveIdentity: true); // We want Serial Numbers
 
     _subscription?.cancel();
