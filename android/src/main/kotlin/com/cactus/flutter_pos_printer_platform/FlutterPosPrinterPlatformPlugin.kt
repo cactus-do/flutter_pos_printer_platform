@@ -31,10 +31,6 @@ class FlutterPosPrinterPlatformPlugin :
     private lateinit var stateChannel: EventChannel
     private lateinit var dataChannel: EventChannel
 
-    private var stateSink: EventChannel.EventSink? = null
-    private var dataSink: EventChannel.EventSink? = null
-
-    private lateinit var printerManager: UsbPrinterManager
     private var usbReceiver: UsbReceiver? = null
 
 
@@ -45,36 +41,46 @@ class FlutterPosPrinterPlatformPlugin :
 
         const val MSG_STATE = 1
         const val MSG_DATA = 2
-    }
 
-    /** Handler que recibe eventos desde CADA UsbPrinter */
-    private val usbHandler = object : Handler(Looper.getMainLooper()) {
-        override fun handleMessage(msg: Message) {
-            when (msg.what) {
+        @JvmStatic
+        private var printerManager: UsbPrinterManager? = null
 
-                MSG_STATE -> {
-                    val map = msg.obj as Map<*, *>
-                    stateSink?.success(
-                        mapOf(
-                            "address" to map["address"],
-                            "state" to map["state"]
+        @JvmStatic
+        private var stateSink: EventChannel.EventSink? = null
+
+        @JvmStatic
+        private var dataSink: EventChannel.EventSink? = null
+
+        /** Handler que recibe eventos desde CADA UsbPrinter */
+        private val usbHandler = object : Handler(Looper.getMainLooper()) {
+            override fun handleMessage(msg: Message) {
+                when (msg.what) {
+
+                    MSG_STATE -> {
+                        val map = msg.obj as Map<*, *>
+                        stateSink?.success(
+                            mapOf(
+                                "address" to map["address"],
+                                "state" to map["state"]
+                            )
                         )
-                    )
-                }
+                    }
 
-                MSG_DATA -> {
-                    val map = msg.obj as Map<*, *>
-                    val bytes = map["data"] as ByteArray
-                    dataSink?.success(
-                        mapOf(
-                            "address" to map["address"],
-                            "data" to bytes.map { it.toInt() }
+                    MSG_DATA -> {
+                        val map = msg.obj as Map<*, *>
+                        val bytes = map["data"] as ByteArray
+                        dataSink?.success(
+                            mapOf(
+                                "address" to map["address"],
+                                "data" to bytes.map { it.toInt() }
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
     }
+
 
     /* ================= Flutter lifecycle ================= */
 
@@ -110,11 +116,16 @@ class FlutterPosPrinterPlatformPlugin :
         methodChannel.setMethodCallHandler(null)
         stateSink = null
         dataSink = null
+        printerManager?.closeAll()
     }
+
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
         context = binding.activity.applicationContext
+        
+        // Hot Restart fix: ensure we clean up any old manager
+        printerManager?.closeAll()
         printerManager = UsbPrinterManager(context!!, usbHandler)
         
         // Register USB Receiver
@@ -131,8 +142,11 @@ class FlutterPosPrinterPlatformPlugin :
             context?.unregisterReceiver(it)
         }
         usbReceiver = null
+        printerManager?.closeAll()
         activity = null
     }
+
+
 
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -149,7 +163,12 @@ class FlutterPosPrinterPlatformPlugin :
         when (call.method) {
 
             "getList" -> {
-                val list = printerManager.listDevices().map { d ->
+                val mgr = printerManager
+                if (mgr == null) {
+                    result.success(emptyList<Map<String, Any>>())
+                    return
+                }
+                val list = mgr.listDevices().map { d ->
                     mapOf(
                         "deviceId" to d.deviceId.toString(),
                         "vendorId" to d.vendorId,
@@ -157,11 +176,9 @@ class FlutterPosPrinterPlatformPlugin :
                         "name" to d.deviceName,
                         "manufacturer" to d.manufacturerName,
                         "product" to d.productName,
-                        "connected" to printerManager.isConnected(d.deviceName)
+                        "connected" to mgr.isConnected(d.deviceName)
                     )
                 }
-
-
                 result.success(list)
             }
 
@@ -171,7 +188,7 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                result.success(printerManager.connect(address))
+                result.success(printerManager?.connect(address) ?: false)
             }
 
 
@@ -181,7 +198,7 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                printerManager.disconnect(address)
+                printerManager?.disconnect(address)
                 result.success(true)
             }
 
@@ -192,7 +209,7 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                result.success(printerManager.printText(address, text))
+                result.success(printerManager?.printText(address, text) ?: false)
             }
 
             "printRawData" -> {
@@ -202,7 +219,7 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                result.success(printerManager.printRaw(address, raw))
+                result.success(printerManager?.printRaw(address, raw) ?: false)
             }
 
             "printBytes" -> {
@@ -212,8 +229,9 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                result.success(printerManager.printBytes(address, bytes))
+                result.success(printerManager?.printBytes(address, bytes) ?: false)
             }
+
 
 
             else -> result.notImplemented()
