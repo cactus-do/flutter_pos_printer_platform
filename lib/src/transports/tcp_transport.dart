@@ -12,7 +12,6 @@ class TcpTransport extends PrinterTransport {
   final int port;
   final Duration timeout;
 
-  Socket? _socket;
   final StreamController<PosPrinterConnectionState> _stateController = StreamController.broadcast();
   final StreamController<PrinterStatus> _statusController = StreamController.broadcast();
   Timer? _heartbeatTimer;
@@ -34,27 +33,13 @@ class TcpTransport extends PrinterTransport {
 
   @override
   Future<bool> connect() async {
-    if (_socket != null) return true; // Already connected
-
     try {
       _stateController.add(PosPrinterConnectionState.connecting);
-      _socket = await Socket.connect(ipAddress, port, timeout: timeout);
+      final socket = await Socket.connect(ipAddress, port, timeout: timeout);
       _stateController.add(PosPrinterConnectionState.connected);
       _statusController.add(PrinterStatus.good);
 
-      // Listen for data (status responses) and closure
-      _socket!.listen(
-        (data) {
-          _parseStatus(data);
-        },
-        onDone: () {
-          _disconnectCleanup();
-        },
-        onError: (e) {
-          _disconnectCleanup();
-        },
-      );
-
+      socket.destroy();
       _startHeartbeat();
       return true;
     } catch (e) {
@@ -63,17 +48,16 @@ class TcpTransport extends PrinterTransport {
     }
   }
 
-  void _startHeartbeat() {
+  void _startHeartbeat() async {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(Duration(seconds: 3), (timer) {
-      if (_socket == null) {
-        timer.cancel();
-        return;
-      }
+    _heartbeatTimer = Timer.periodic(Duration(seconds: 30), (timer) async {
       // Send DLE EOT 4 (Real-time status transmission: Paper sensor)
       // 0x10 0x04 0x04
       try {
-        _socket!.add(Uint8List.fromList([0x10, 0x04, 0x04]));
+        final socket = await Socket.connect(ipAddress, port, timeout: timeout);
+        socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
+        await socket.flush();
+        socket.destroy();
         // If flush fails, it might throw, triggering disconnect in the future?
         // Socket.add is non-blocking usually.
       } catch (e) {
@@ -82,37 +66,37 @@ class TcpTransport extends PrinterTransport {
     });
   }
 
-  void _parseStatus(Uint8List data) {
-    if (data.isEmpty) return;
-    // DLE EOT 4 response is 1 byte.
-    // We might receive other data if we add read support later.
-    // For now, assume single byte status if length is 1.
-    for (final byte in data) {
-      // Check for paper end
-      // Bit 5 and 6 = 1 means Paper End.
-      // 0x60 mask.
-      // If (byte & 0x60) == 0x60 -> Paper Empty
-      // If (byte & 0x0C) == 0x0C -> Paper Near End
+  // void _parseStatus(Uint8List data) {
+  //   if (data.isEmpty) return;
+  //   // DLE EOT 4 response is 1 byte.
+  //   // We might receive other data if we add read support later.
+  //   // For now, assume single byte status if length is 1.
+  //   for (final byte in data) {
+  //     // Check for paper end
+  //     // Bit 5 and 6 = 1 means Paper End.
+  //     // 0x60 mask.
+  //     // If (byte & 0x60) == 0x60 -> Paper Empty
+  //     // If (byte & 0x0C) == 0x0C -> Paper Near End
 
-      // Standard ESC/POS Status (n=4):
-      // Bit 0: Fixed 0
-      // Bit 1: Fixed 1
-      // Bit 2,3: Paper roll near-end sensor: 00=Paper adequate, 11=Paper near end
-      // Bit 4: Fixed 0
-      // Bit 5,6: Paper roll end sensor: 00=Paper present, 11=Paper end
-      // Bit 7: Fixed 0
+  //     // Standard ESC/POS Status (n=4):
+  //     // Bit 0: Fixed 0
+  //     // Bit 1: Fixed 1
+  //     // Bit 2,3: Paper roll near-end sensor: 00=Paper adequate, 11=Paper near end
+  //     // Bit 4: Fixed 0
+  //     // Bit 5,6: Paper roll end sensor: 00=Paper present, 11=Paper end
+  //     // Bit 7: Fixed 0
 
-      // So byte should look like 0xx0xxxx (binary)
+  //     // So byte should look like 0xx0xxxx (binary)
 
-      if ((byte & 0x60) == 0x60) {
-        _statusController.add(PrinterStatus.paperOut);
-      } else if ((byte & 0x0C) == 0x0C) {
-        _statusController.add(PrinterStatus.paperLow);
-      } else {
-        _statusController.add(PrinterStatus.good);
-      }
-    }
-  }
+  //     if ((byte & 0x60) == 0x60) {
+  //       _statusController.add(PrinterStatus.paperOut);
+  //     } else if ((byte & 0x0C) == 0x0C) {
+  //       _statusController.add(PrinterStatus.paperLow);
+  //     } else {
+  //       _statusController.add(PrinterStatus.good);
+  //     }
+  //   }
+  // }
 
   @override
   Future<bool> disconnect() async {
@@ -124,25 +108,18 @@ class TcpTransport extends PrinterTransport {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
 
-    if (_socket != null) {
-      await _socket!.close();
-      _socket!.destroy();
-      _socket = null;
-    }
     _stateController.add(PosPrinterConnectionState.disconnected);
     _statusController.add(PrinterStatus.unknown);
   }
 
   @override
   Future<bool> write(List<int> bytes) async {
-    if (_socket == null) {
-      final connected = await connect();
-      if (!connected) return false;
-    }
-
     try {
-      _socket!.add(Uint8List.fromList(bytes));
-      await _socket!.flush();
+      _startHeartbeat();
+      final socket = await Socket.connect(ipAddress, port, timeout: timeout);
+      socket.add(Uint8List.fromList(bytes));
+      await socket.flush();
+      socket.destroy();
       return true;
     } catch (e) {
       await _disconnectCleanup();
@@ -159,9 +136,9 @@ class TcpTransport extends PrinterTransport {
   }) async* {
     print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
-    final stream = await NetworkAnalyzer.discoverAllLocal(port: port);
+    final stream = (await NetworkAnalyzer.discoverAllLocal(port: port)).asBroadcastStream();
 
-    await for (var data in stream) {
+    await for (var data in stream) {      
       if (data.exists) {
         print("Found device at ${data.ip}");
         var device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);

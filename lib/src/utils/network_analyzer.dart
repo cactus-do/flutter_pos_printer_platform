@@ -13,7 +13,7 @@ class NetworkAnalyzer {
     String subnet,
     int port, {
     Duration timeout = const Duration(milliseconds: 400),
-  }) async* {
+  }) {
     if (port < 1 || port > 65535) {
       throw 'Incorrect port';
     }
@@ -32,10 +32,7 @@ class NetworkAnalyzer {
     // However, future iteration order is not guaranteed.
     // A simple way is to yield them as they complete.
 
-    final stream = Stream.fromFutures(futures);
-    await for (final addr in stream) {
-      yield addr;
-    }
+    return Stream.fromFutures(futures);
   }
 
   static Future<NetworkAddress> _checkConnection(
@@ -70,7 +67,7 @@ class NetworkAnalyzer {
     try {
       final subnet = address.substring(0, address.lastIndexOf('.'));
       // internally this method opens a socket with each ip address to test if there is connection
-      stream = discover(subnet, port, timeout: const Duration(milliseconds: 200));
+      stream = discover(subnet, port, timeout: const Duration(milliseconds: 500));
     } catch (error) {
       print('Error at NetworkScanner._getSubnetStream: $error');
     }
