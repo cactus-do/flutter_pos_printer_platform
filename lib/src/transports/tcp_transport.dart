@@ -25,6 +25,31 @@ class TcpTransport extends PrinterTransport {
     _statusController.add(PrinterStatus.unknown);
   }
 
+  // Global lock mechanism to prevent concurrent socket access to the same address (Static vs Instance)
+  static final Map<String, Future<void>> _locks = {};
+  
+  static Future<T> synchronizedGlobal<T>(String address, int port, Future<T> Function() action) async {
+    final key = "$address:$port";
+    final previousLock = _locks[key] ?? Future.value();
+    final completer = Completer<T>();
+    _locks[key] = completer.future.then((_) => null).catchError((_) => null);
+    
+    await previousLock;
+    try {
+      final result = await action();
+      completer.complete(result);
+      return result;
+    } catch (e) {
+      completer.completeError(e);
+      rethrow;
+    }
+  }
+
+  Future<T> _synchronizedLocal<T>(Future<T> Function() action) async {
+    return synchronizedGlobal(ipAddress, port, action);
+  }
+
+
   @override
   Stream<PosPrinterConnectionState> get state => _stateController.stream;
 
@@ -33,38 +58,42 @@ class TcpTransport extends PrinterTransport {
 
   @override
   Future<bool> connect() async {
-    try {
-      _stateController.add(PosPrinterConnectionState.connecting);
-      final socket = await Socket.connect(ipAddress, port, timeout: timeout);
-      _stateController.add(PosPrinterConnectionState.connected);
-      _statusController.add(PrinterStatus.good);
+    return _synchronizedLocal(() async {
+      try {
+        _stateController.add(PosPrinterConnectionState.connecting);
+        final socket = await Socket.connect(ipAddress, port, timeout: timeout);
+        _stateController.add(PosPrinterConnectionState.connected);
+        _statusController.add(PrinterStatus.good);
 
-      socket.destroy();
-      _startHeartbeat();
-      return true;
-    } catch (e) {
-      _disconnectCleanup();
-      return false;
-    }
+        socket.destroy();
+        _startHeartbeat();
+        return true;
+      } catch (e) {
+        _disconnectCleanup();
+        return false;
+      }
+    });
   }
 
   void _startHeartbeat() async {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(Duration(seconds: 30), (timer) async {
-      // Send DLE EOT 4 (Real-time status transmission: Paper sensor)
-      // 0x10 0x04 0x04
-      try {
-        final socket = await Socket.connect(ipAddress, port, timeout: timeout);
-        socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
-        await socket.flush();
-        socket.destroy();
-        // If flush fails, it might throw, triggering disconnect in the future?
-        // Socket.add is non-blocking usually.
-      } catch (e) {
-        _disconnectCleanup();
-      }
+      await _synchronizedLocal(() async {
+        // Send DLE EOT 4 (Real-time status transmission: Paper sensor)
+        // 0x10 0x04 0x04
+        try {
+          final socket = await Socket.connect(ipAddress, port, timeout: timeout);
+          socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
+          await socket.flush();
+          socket.destroy();
+        } catch (e) {
+          _disconnectCleanup();
+        }
+      });
     });
   }
+
+
 
   // void _parseStatus(Uint8List data) {
   //   if (data.isEmpty) return;
@@ -114,18 +143,22 @@ class TcpTransport extends PrinterTransport {
 
   @override
   Future<bool> write(List<int> bytes) async {
-    try {
-      _startHeartbeat();
-      final socket = await Socket.connect(ipAddress, port, timeout: timeout);
-      socket.add(Uint8List.fromList(bytes));
-      await socket.flush();
-      socket.destroy();
-      return true;
-    } catch (e) {
-      await _disconnectCleanup();
-      return false;
-    }
+    return _synchronizedLocal(() async {
+      try {
+        _startHeartbeat();
+        final socket = await Socket.connect(ipAddress, port, timeout: timeout);
+        socket.add(Uint8List.fromList(bytes));
+        await socket.flush();
+        socket.destroy();
+        return true;
+      } catch (e) {
+        await _disconnectCleanup();
+        return false;
+      }
+    });
   }
+
+
 
   /// Starts a scan for network printers.
   /// If [resolveIdentity] is true, it will attempt to fetch the serial number for each found printer.
@@ -157,23 +190,27 @@ class TcpTransport extends PrinterTransport {
   }
 
   static Future<PrinterInfo> getPrinterInfo({required String ipAddress, int port = 9100}) async {
-    Socket? socket;
-    // Strategy A: ESC/POS (Port 9100)
-    try {
-      socket = await Socket.connect(ipAddress, port, timeout: Duration(seconds: 2));
-      // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
-      final serial = await _getEscPosData(socket, [0x1D, 0x49, 0x44]);
-      // Send GS I n (Transmit Printer ID) - 67 = Model (0x43)
-      final model = await _getEscPosData(socket, [0x1D, 0x49, 0x43]);
+    return synchronizedGlobal(ipAddress, port, () async {
 
-      return PrinterInfo(serialNumber: serial, model: model, manufacturer: 'Unknown');
-    } catch (e) {
-      print('ESC/POS Query failed: $e');
-      return PrinterInfo();
-    } finally {
-      socket?.destroy();
-    }
+      Socket? socket;
+      // Strategy A: ESC/POS (Port 9100)
+      try {
+        socket = await Socket.connect(ipAddress, port, timeout: Duration(seconds: 2));
+        // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
+        final serial = await _getEscPosData(socket, [0x1D, 0x49, 0x44]);
+        // Send GS I n (Transmit Printer ID) - 67 = Model (0x43)
+        final model = await _getEscPosData(socket, [0x1D, 0x49, 0x43]);
+
+        return PrinterInfo(serialNumber: serial, model: model, manufacturer: 'Unknown');
+      } catch (e) {
+        print('ESC/POS Query failed: $e');
+        return PrinterInfo();
+      } finally {
+        socket?.destroy();
+      }
+    });
   }
+
 
   static Future<String?> _getEscPosData(Socket socket, List<int> bytes) async {
     socket.add(bytes);

@@ -1,6 +1,7 @@
-import 'dart:async' show Stream;
 import 'package:async/async.dart' show StreamGroup;
 import 'dart:io';
+import '../transports/tcp_transport.dart';
+
 
 class NetworkAddress {
   final String ip;
@@ -40,14 +41,17 @@ class NetworkAnalyzer {
     int port,
     Duration timeout,
   ) async {
-    try {
-      final socket = await Socket.connect(ip, port, timeout: timeout);
-      socket.destroy();
-      return NetworkAddress(ip, true);
-    } catch (e) {
-      return NetworkAddress(ip, false);
-    }
+    return TcpTransport.synchronizedGlobal(ip, port, () async {
+      try {
+        final socket = await Socket.connect(ip, port, timeout: timeout);
+        socket.destroy();
+        return NetworkAddress(ip, true);
+      } catch (e) {
+        return NetworkAddress(ip, false);
+      }
+    });
   }
+
 
   /// Returns a list of streams for each existing network interface
   static Future<Stream<NetworkAddress>> discoverAllLocal({int port = 9100}) async {
