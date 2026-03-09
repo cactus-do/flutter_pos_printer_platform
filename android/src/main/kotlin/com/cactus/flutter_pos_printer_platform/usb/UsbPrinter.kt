@@ -1,7 +1,10 @@
 package com.cactus.flutter_pos_printer_platform.usb
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.hardware.usb.*
+import android.os.Build
 import android.os.Handler
 import android.util.Base64
 import android.util.Log
@@ -9,6 +12,7 @@ import java.nio.charset.Charset
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+
 
 class UsbPrinter(
     private val context: Context,
@@ -40,12 +44,27 @@ class UsbPrinter(
     fun connect(): Boolean {
         if (connection != null) return true
 
+        if (!usbManager.hasPermission(device)) {
+            Log.d("UsbPrinter", "Requesting permission for device: ${device.deviceName}")
+            val intent = Intent("com.flutter_pos_printer.USB_PERMISSION")
+            intent.setPackage(context.packageName)
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
+            usbManager.requestPermission(device, permissionIntent)
+            return false // Will retry or handle via Broadcast
+        }
+
         if (!findEndpoints()) {
             Log.e("UsbPrinter", "No bulk endpoint found")
             return false
         }
 
         val conn = usbManager.openDevice(device) ?: return false
+
 
         if (!conn.claimInterface(iface!!, true)) {
             conn.close()
