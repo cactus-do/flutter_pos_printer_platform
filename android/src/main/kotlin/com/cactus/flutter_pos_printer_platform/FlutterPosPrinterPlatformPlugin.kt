@@ -15,6 +15,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.*
+import kotlinx.coroutines.*
 
 
 class FlutterPosPrinterPlatformPlugin :
@@ -23,6 +24,7 @@ class FlutterPosPrinterPlatformPlugin :
     ActivityAware {
 
     private val TAG = "FlutterPosPrinterPlugin"
+    private val pluginScope = CoroutineScope(Dispatchers.Main + Job())
 
     private var context: Context? = null
     private var activity: Activity? = null
@@ -117,6 +119,7 @@ class FlutterPosPrinterPlatformPlugin :
         stateSink = null
         dataSink = null
         printerManager?.closeAll()
+        pluginScope.cancel()
     }
 
 
@@ -133,6 +136,7 @@ class FlutterPosPrinterPlatformPlugin :
         val filter = IntentFilter().apply {
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction("com.flutter_pos_printer.USB_PERMISSION")
         }
         context!!.registerReceiver(usbReceiver, filter)
     }
@@ -188,7 +192,10 @@ class FlutterPosPrinterPlatformPlugin :
                     result.success(false)
                     return
                 }
-                result.success(printerManager?.connect(address) ?: false)
+                pluginScope.launch {
+                    val success = printerManager?.connect(address) ?: false
+                    result.success(success)
+                }
             }
 
 

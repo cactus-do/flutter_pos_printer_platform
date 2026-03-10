@@ -45,6 +45,12 @@ class UsbTransport extends PrinterTransport {
           return PosPrinterConnectionState.connected;
         case USBStatus.connecting:
           return PosPrinterConnectionState.connecting;
+        case USBStatus.permissionNeeded:
+          return PosPrinterConnectionState.permissionNeeded;
+        case USBStatus.permissionGranted:
+          return PosPrinterConnectionState.permissionGranted;
+        case USBStatus.permissionDenied:
+          return PosPrinterConnectionState.permissionDenied;
         default:
           return PosPrinterConnectionState.disconnected;
       }

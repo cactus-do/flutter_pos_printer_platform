@@ -22,7 +22,7 @@ class UsbPrinterManager(
 
     fun isConnected(address: String): Boolean = printers[address]?.isConnected() ?: false
 
-    fun connect(address: String): Boolean {
+    suspend fun connect(address: String): Boolean {
         Log.d("UsbPrinterManager", "Connecting to address: $address")
         if (printers.containsKey(address)) {
             Log.d("UsbPrinterManager", "Printer already in map for $address")
@@ -47,8 +47,6 @@ class UsbPrinterManager(
         }
         return success
     }
-
-
 
     fun disconnect(address: String) {
         printers.remove(address)?.close()

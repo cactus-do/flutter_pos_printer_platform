@@ -41,7 +41,7 @@ class UsbPrinter(
     // CONNECT
     // =====================================================
 
-    fun connect(): Boolean {
+    suspend fun connect(): Boolean {
         if (connection != null) return true
 
         if (!usbManager.hasPermission(device)) {
@@ -54,9 +54,22 @@ class UsbPrinter(
                 PendingIntent.FLAG_UPDATE_CURRENT
             }
             val permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
+            
+            // Register a deferred result and wait for it
+            val deferred = UsbPermissionManager.registerRequest(device.deviceName)
             usbManager.requestPermission(device, permissionIntent)
-            return false // Will retry or handle via Broadcast
+            
+            notifyState(3) // Permission Needed
+            val granted = deferred.await()
+            if (!granted) {
+                notifyState(5) // Permission Denied
+                return false
+            }
+            notifyState(4) // Permission Granted
+
         }
+
+
 
         if (!findEndpoints()) {
             Log.e("UsbPrinter", "No bulk endpoint found")

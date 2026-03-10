@@ -1,6 +1,6 @@
 enum PrinterType { usb, network }
 
-enum USBStatus { none, connecting, connected }
+enum USBStatus { none, connecting, connected, permissionNeeded, permissionGranted, permissionDenied }
 
 enum PrinterStatus {
   good,
@@ -16,4 +16,7 @@ enum PosPrinterConnectionState {
   disconnected,
   connecting,
   connected,
+  permissionNeeded,
+  permissionGranted,
+  permissionDenied,
 }
