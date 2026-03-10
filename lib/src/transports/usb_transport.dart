@@ -17,7 +17,6 @@ class UsbTransport extends PrinterTransport {
   Future<bool> connect() async {
     final deviceId = address;
     if (deviceId == null) return false;
-    
     return await _platform.connect(address: deviceId);
   }
 
@@ -25,7 +24,6 @@ class UsbTransport extends PrinterTransport {
   Future<bool> disconnect() async {
     final deviceId = address;
     if (deviceId == null) return false;
-    
     return await _platform.disconnect(address: deviceId);
   }
 
@@ -33,14 +31,13 @@ class UsbTransport extends PrinterTransport {
   Future<bool> write(List<int> bytes) async {
     final deviceId = address;
     if (deviceId == null) return false;
-    
     return await _platform.write(address: deviceId, bytes: bytes);
   }
 
   @override
   Stream<PosPrinterConnectionState> get state {
-    return _platform.state.map((state) {
-      switch (state.status) {
+    return _platform.state.where((event) => event.address == address).map((event) {
+      switch (event.status) {
         case USBStatus.connected:
           return PosPrinterConnectionState.connected;
         case USBStatus.connecting:
@@ -59,9 +56,8 @@ class UsbTransport extends PrinterTransport {
 
   @override
   Stream<PrinterStatus> get status {
-    // USB status not fully implemented on platform side yet
-    return _platform.state.map((status) {
-      if (status == USBStatus.connected) {
+    return _platform.state.where((event) => event.address == address).map((event) {
+      if (event.status == USBStatus.connected) {
         return PrinterStatus.good;
       } else {
         return PrinterStatus.unknown;
@@ -72,7 +68,7 @@ class UsbTransport extends PrinterTransport {
   Future<List<int>?> read({int timeout = 2000}) async {
     final deviceId = address;
     if (deviceId == null) return null;
-    
+
     return await _platform.read(address: deviceId, timeout: timeout);
   }
 
@@ -84,7 +80,7 @@ class UsbTransport extends PrinterTransport {
         final productId = device['productId']?.toString();
         final address = device['name']?.toString();
         final bool wasConnected = device['connected'] == true;
-        
+
         var mappedDevice = PrinterDevice(
           name: device['product'] ?? device['name'] ?? 'Unknown',
           vendorId: vendorId,
@@ -97,18 +93,17 @@ class UsbTransport extends PrinterTransport {
         if (resolveIdentity && address != null) {
           final info = await _getPrinterInfoInternal(address: address, wasConnected: wasConnected);
           if (info?.serialNumber != null) {
-              mappedDevice.serialNumber = info?.serialNumber;
+            mappedDevice.serialNumber = info?.serialNumber;
           }
           if (info?.model != null) {
-              mappedDevice.model = info?.model;
+            mappedDevice.model = info?.model;
           }
           if (info?.manufacturer != null && info?.manufacturer != 'Unknown') {
-              mappedDevice.manufacturer = info?.manufacturer;
+            mappedDevice.manufacturer = info?.manufacturer;
           }
         }
 
         yield mappedDevice;
-
       }
     }
   }
@@ -123,14 +118,13 @@ class UsbTransport extends PrinterTransport {
     required String address,
     required bool wasConnected,
   }) async {
-
     final platform = FlutterPosPrinterPlatform.instance;
     final bool connected = await platform.connect(address: address);
-    
+
     if (!connected) return null;
 
     final List<int> accumulatedData = [];
-    final subscription = platform.usbDataStream.listen((event) {
+    final subscription = platform.usbDataStream.where((event) => event.address == address).listen((event) {
       accumulatedData.addAll(event.data);
     });
 
@@ -138,14 +132,14 @@ class UsbTransport extends PrinterTransport {
       // 1. Get Model
       await platform.write(address: address, bytes: [0x1D, 0x49, 0x43]);
       final model = await _waitForResponse(accumulatedData);
-      
+
       accumulatedData.clear();
       await Future.delayed(const Duration(milliseconds: 150));
 
       // 2. Get Serial
       await platform.write(address: address, bytes: [0x1D, 0x49, 0x44]);
       final serial = await _waitForResponse(accumulatedData);
-      
+
       return PrinterInfo(
         model: model,
         serialNumber: serial,
@@ -163,17 +157,16 @@ class UsbTransport extends PrinterTransport {
     }
   }
 
-
   /// Waits for data to arrive in the buffer and settles for a short window.
   static Future<String?> _waitForResponse(List<int> buffer, {int timeoutMs = 2000}) async {
     final startTime = DateTime.now();
-    
+
     // Wait for first byte
     while (buffer.isEmpty) {
       if (DateTime.now().difference(startTime).inMilliseconds > timeoutMs) return null;
       await Future.delayed(const Duration(milliseconds: 50));
     }
-    
+
     // Once data starts arriving, wait until it stops for at least 300ms (increased for stability)
     int lastSize = buffer.length;
     while (true) {
