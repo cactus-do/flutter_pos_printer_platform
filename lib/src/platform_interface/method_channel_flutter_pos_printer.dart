@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_pos_printer_platform_image_3/src/models/events.dart';
 
 import 'flutter_pos_printer_platform.dart';
 import '../enums.dart';

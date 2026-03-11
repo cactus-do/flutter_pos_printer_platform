@@ -36,7 +36,7 @@ class UsbTransport extends PrinterTransport {
 
   @override
   Stream<PosPrinterConnectionState> get state {
-    return _platform.state.where((event) => event.address == address).map((event) {
+    return _platform.state.where((event) => event.address == address && event.status.isPrinterStatus).map((event) {
       switch (event.status) {
         case USBStatus.connected:
           return PosPrinterConnectionState.connected;
@@ -48,8 +48,10 @@ class UsbTransport extends PrinterTransport {
           return PosPrinterConnectionState.permissionGranted;
         case USBStatus.permissionDenied:
           return PosPrinterConnectionState.permissionDenied;
-        default:
+        case USBStatus.disconnected:
           return PosPrinterConnectionState.disconnected;
+        default:
+          return PosPrinterConnectionState.unknown;
       }
     });
   }

@@ -61,7 +61,22 @@ class UsbPrinterManager(
     fun printBytes(address: String, bytes: ArrayList<Int>): Boolean =
         printers[address]?.printBytes(bytes) ?: false
 
+    fun notifyGlobalState(address: String, state: Int) {
+        eventHandler.obtainMessage(
+            1, // MSG_STATE
+            mapOf(
+                "address" to address,
+                "state" to state
+            )
+        ).sendToTarget()
+    }
+
+    fun onUsbAttached(device: UsbDevice) {
+        notifyGlobalState(device.deviceName, 6) // deviceAttached
+    }
+
     fun onUsbDetached(device: UsbDevice) {
+        notifyGlobalState(device.deviceName, 7) // deviceDetached
         disconnect(device.deviceName)
     }
 

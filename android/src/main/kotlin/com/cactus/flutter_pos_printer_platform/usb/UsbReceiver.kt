@@ -20,6 +20,8 @@ class UsbReceiver(private val manager: UsbPrinterManager? = null) : BroadcastRec
         when (action) {
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                 Log.d("UsbReceiver", "USB Device attached: ${usbDevice.deviceName}")
+                manager?.onUsbAttached(usbDevice)
+
                 val intentPermission = Intent("com.flutter_pos_printer.USB_PERMISSION")
                 intentPermission.setPackage(context?.packageName)
                 val mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {

@@ -1,6 +1,6 @@
+import 'package:flutter_pos_printer_platform_image_3/src/models/events.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'method_channel_flutter_pos_printer.dart';
-import '../enums.dart'; // for USBStatus
 
 abstract class FlutterPosPrinterPlatform extends PlatformInterface {
   /// Constructs a FlutterPosPrinterPlatform.
@@ -62,25 +62,4 @@ abstract class FlutterPosPrinterPlatform extends PlatformInterface {
   Stream<USBStatusEvent> get state {
     throw UnimplementedError('state has not been implemented.');
   }
-}
-
-
-class USBStatusEvent {
-  final String address;
-  final USBStatus status;
-
-  USBStatusEvent({
-    required this.address,
-    required this.status,
-  });
-}
-
-class USBDataEvent {
-  final String address;
-  final List<int> data;
-
-  USBDataEvent({
-    required this.address,
-    required this.data,
-  });
 }
