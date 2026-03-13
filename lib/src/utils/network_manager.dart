@@ -27,7 +27,7 @@ class NetworkManager {
       await _locks[key]!.future;
     }
     _locks[key] = Completer<void>();
-    
+
     try {
       return await _connect(consumer, host, port, timeout: timeout);
     } catch (e) {
@@ -94,7 +94,7 @@ class NetworkManager {
   /// Removes a consumer from the list of consumers for a given socket and closes the socket if no more consumers are using it
   void closeSocket(SocketConsumer consumer, String host, int port) {
     final key = _getMapKey(host, port);
-    
+
     final lock = _locks.remove(key);
     if (lock != null && !lock.isCompleted) lock.complete();
 
@@ -127,11 +127,9 @@ mixin SocketConsumer {
   }
 }
 
-
 class NetworkPrinterDiscoverer with SocketConsumer {
   static final NetworkPrinterDiscoverer instance = NetworkPrinterDiscoverer._();
   NetworkPrinterDiscoverer._();
-
 
   Future<PrinterInfo> getPrinterInfo({required String ipAddress, int port = 9100}) async {
     // Strategy A: ESC/POS (Port 9100)
@@ -176,26 +174,23 @@ class NetworkPrinterDiscoverer with SocketConsumer {
     String? ipAddress,
     int port = 9100,
     bool resolveIdentity = false,
-  }) async* {
+  }) {
     print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
-    final stream = (await NetworkAnalyzer.instance.discoverAllLocal(port: port)).asBroadcastStream();
+    final stream = NetworkAnalyzer.instance.discover(port: port).asBroadcastStream();
 
-    await for (final data in stream) {
-      if (data.exists) {
-        print("Found device at ${data.ip}");
-        final device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);
+    return stream.asyncMap((data) async {
+      print("Found device at ${data.ip}");
+      final device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);
 
-        if (resolveIdentity) {
-          final info = await getPrinterInfo(ipAddress: data.ip, port: port);
-          device.serialNumber = info.serialNumber;
-          device.model = info.model;
-          device.manufacturer = info.manufacturer;
-        }
-
-        yield device;
+      if (resolveIdentity) {
+        final info = await getPrinterInfo(ipAddress: data.ip, port: port);
+        device.serialNumber = info.serialNumber;
+        device.model = info.model;
+        device.manufacturer = info.manufacturer;
       }
-    }
-    print("Network discovery finished.");
+
+      return device;
+    });
   }
 }

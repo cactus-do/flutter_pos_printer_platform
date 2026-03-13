@@ -1,4 +1,4 @@
-import 'package:async/async.dart' show StreamGroup;
+import 'dart:async';
 import 'package:flutter_pos_printer_platform_image_3/src/utils/network_manager.dart';
 import 'dart:io';
 
@@ -12,7 +12,7 @@ class NetworkAnalyzer with SocketConsumer {
   static final NetworkAnalyzer instance = NetworkAnalyzer._();
   NetworkAnalyzer._();
 
-  Stream<NetworkAddress> discover(
+  List<Future<NetworkAddress>> _discover(
     String subnet,
     int port, {
     Duration timeout = const Duration(milliseconds: 400),
@@ -35,7 +35,7 @@ class NetworkAnalyzer with SocketConsumer {
     // However, future iteration order is not guaranteed.
     // A simple way is to yield them as they complete.
 
-    return Stream.fromFutures(futures);
+    return futures;
   }
 
   Future<NetworkAddress> _checkConnection(
@@ -52,27 +52,16 @@ class NetworkAnalyzer with SocketConsumer {
       closeSocket(ip, port);
     }
   }
-
-  /// Returns a list of streams for each existing network interface
-  Future<Stream<NetworkAddress>> discoverAllLocal({int port = 9100}) async {
-    final streams = await _getAllLocalNetworks().then((address) =>
-        address.map((address) => _getNetworkStream(address, port)).whereType<Stream<NetworkAddress>>().toList());
-    return StreamGroup.merge(streams);
+  
+  Stream<NetworkAddress> discover({int port = 9100}) {
+    return _discoverAll(port).asStream().expand((e) => e).where((e) => e.exists);
   }
 
   // Returns all ip addresses that needs to be checked for connection of all network interfaces
-  Future<List<String>> _getAllLocalNetworks() async {
-    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: true);
-    return interfaces.expand((e) => e.addresses.map((element) => element.address)).toList();
-  }
-
-  Stream<NetworkAddress>? _getNetworkStream(String address, int port) {
-    try {
-      final subnet = address.substring(0, address.lastIndexOf('.'));
-      return discover(subnet, port, timeout: const Duration(milliseconds: 500));
-    } catch (error) {
-      print('Error at NetworkScanner._getSubnetStream: $error');
-      return null;
-    }
+  Future<List<NetworkAddress>> _discoverAll(int port) async {
+    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
+    final networks = interfaces.expand((e) => e.addresses.map((element) => element.address)).toList();
+    final discovery = networks.expand((add) => _discover(add, port, timeout: Duration(milliseconds: 500))).toList();
+    return Future.wait(discovery);
   }
 }
