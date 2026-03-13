@@ -1,5 +1,6 @@
 enum PrinterType { usb, network }
 
+// IMPORTANT: Do not modify this enum values indexes, since the USB status is mapped to the printer status by their index
 enum USBStatus {
   disconnected,
   connecting,
