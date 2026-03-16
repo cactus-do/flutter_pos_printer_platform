@@ -153,7 +153,7 @@ class NetworkPrinterDiscoverer with SocketConsumer {
     socket.add(bytes);
 
     final completer = Completer<String?>();
-    final subscription = socket.listen((data) {
+    final subscription = socket.asBroadcastStream().listen((data) {
       try {
         final filtered = data.where((b) => b >= 32 && b <= 126).toList();
         if (filtered.isNotEmpty) {
