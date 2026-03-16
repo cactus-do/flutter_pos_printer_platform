@@ -59,9 +59,12 @@ class NetworkAnalyzer with SocketConsumer {
 
   // Returns all ip addresses that needs to be checked for connection of all network interfaces
   Future<List<NetworkAddress>> _discoverAll(int port) async {
-    final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
-    final networks = interfaces.expand((e) => e.addresses.map((element) => element.address)).toList();
-    final discovery = networks.expand((add) => _discover(add, port, timeout: Duration(milliseconds: 500))).toList();
+    // get networks from all network interfaces
+    final ifs = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
+    // map to subnet and remove duplicates
+    final ns = ifs.expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.')))).toSet();
+    // discover printers in each subnet
+    final discovery = ns.expand((add) => _discover(add, port, timeout: Duration(milliseconds: 500))).toList();
     return Future.wait(discovery);
   }
 }
