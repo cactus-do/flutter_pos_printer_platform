@@ -12,7 +12,12 @@ class NetworkAnalyzer with SocketConsumer {
   static final NetworkAnalyzer instance = NetworkAnalyzer._();
   NetworkAnalyzer._();
 
-  List<Future<NetworkAddress>> _discover(
+  final _discoveryController = StreamController<NetworkAddress>.broadcast();
+  Stream<NetworkAddress> get discoveryStream => _discoveryController.stream;
+
+  bool _isDiscovering = false;
+
+  void _discover(
     String subnet,
     int port, {
     Duration timeout = const Duration(milliseconds: 400),
@@ -20,22 +25,15 @@ class NetworkAnalyzer with SocketConsumer {
     if (port < 1 || port > 65535) {
       throw 'Incorrect port';
     }
-    // Subnet should be "192.168.1"
-
-    // Create a list of futures to scan concurrently
-    final List<Future<NetworkAddress>> futures = [];
 
     for (int i = 1; i < 256; ++i) {
       final host = '$subnet.$i';
-      futures.add(_checkConnection(host, port, timeout));
+      _checkConnection(host, port, timeout).then((value) {
+        if (!value.exists) return;
+        _discoveryController.add(value);
+      });
     }
-
-    // Process results as they complete? Or wait for all?
-    // Streaming is better for UI.
-    // However, future iteration order is not guaranteed.
-    // A simple way is to yield them as they complete.
-
-    return futures;
+    return;
   }
 
   Future<NetworkAddress> _checkConnection(
@@ -52,19 +50,24 @@ class NetworkAnalyzer with SocketConsumer {
       closeSocket(ip, port);
     }
   }
-  
-  Stream<NetworkAddress> discover({int port = 9100}) {
-    return _discoverAll(port).asStream().expand((e) => e).where((e) => e.exists);
+
+  void discover({int port = 9100}) async {
+    if (_isDiscovering) return;
+    _isDiscovering = true;
+    await _discoverAll(port);
+    _isDiscovering = false;
   }
 
   // Returns all ip addresses that needs to be checked for connection of all network interfaces
-  Future<List<NetworkAddress>> _discoverAll(int port) async {
+  Future<void> _discoverAll(int port) async {
     // get networks from all network interfaces
     final ifs = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
     // map to subnet and remove duplicates
     final ns = ifs.expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.')))).toSet();
     // discover printers in each subnet
-    final discovery = ns.expand((add) => _discover(add, port, timeout: Duration(milliseconds: 500))).toList();
-    return Future.wait(discovery);
+    for (final n in ns) {
+      _discover(n, port, timeout: Duration(milliseconds: 500));
+    }
+    return;
   }
 }

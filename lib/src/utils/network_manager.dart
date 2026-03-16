@@ -177,7 +177,8 @@ class NetworkPrinterDiscoverer with SocketConsumer {
   }) {
     print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
-    final stream = NetworkAnalyzer.instance.discover(port: port).asBroadcastStream();
+    NetworkAnalyzer.instance.discover(port: port);
+    final stream = NetworkAnalyzer.instance.discoveryStream;
 
     return stream.asyncMap((data) async {
       print("Found device at ${data.ip}");
