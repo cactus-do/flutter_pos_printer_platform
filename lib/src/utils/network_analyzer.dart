@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'package:flutter_pos_printer_platform_image_3/src/utils/network_manager.dart';
 import 'dart:io';
+import 'package:flutter_pos_printer_platform_image_3/src/utils/network_manager.dart';
 
 class NetworkAddress {
   final String ip;
@@ -12,28 +12,64 @@ class NetworkAnalyzer with SocketConsumer {
   static final NetworkAnalyzer instance = NetworkAnalyzer._();
   NetworkAnalyzer._();
 
-  final _discoveryController = StreamController<NetworkAddress>.broadcast();
+  StreamController<NetworkAddress> _discoveryController = StreamController<NetworkAddress>.broadcast();
+
   Stream<NetworkAddress> get discoveryStream => _discoveryController.stream;
 
   bool _isDiscovering = false;
 
-  void _discover(
-    String subnet,
-    int port, {
-    Duration timeout = const Duration(milliseconds: 400),
-  }) {
-    if (port < 1 || port > 65535) {
-      throw 'Incorrect port';
+  Future<void> discover({int port = 9100}) async {
+    if (_isDiscovering) return;
+
+    _isDiscovering = true;
+    _discoveryController = StreamController<NetworkAddress>.broadcast();
+
+    await _discoverAll(port);
+
+    await _discoveryController.close();
+    _isDiscovering = false;
+  }
+
+  Future<void> _discoverAll(int port) async {
+    final ifs = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLinkLocal: false,
+    );
+
+    final subnets =
+        ifs.expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.')))).toSet();
+
+    final ips = <String>[];
+
+    for (final subnet in subnets) {
+      for (int i = 1; i < 256; i++) {
+        ips.add('$subnet.$i');
+      }
     }
 
-    for (int i = 1; i < 256; ++i) {
-      final host = '$subnet.$i';
-      _checkConnection(host, port, timeout).then((value) {
-        if (!value.exists) return;
-        _discoveryController.add(value);
-      });
+    await _scanIps(ips, port);
+  }
+
+  Future<void> _scanIps(List<String> ips, int port) async {
+    const batchSize = 30;
+
+    for (int i = 0; i < ips.length; i += batchSize) {
+      final batch = ips.skip(i).take(batchSize);
+
+      await Future.wait(
+        batch.map((ip) async {
+          final result = await _checkConnection(
+            ip,
+            port,
+            const Duration(milliseconds: 500),
+          );
+
+          if (result.exists) {
+            _discoveryController.add(result);
+          }
+        }),
+      );
     }
-    return;
   }
 
   Future<NetworkAddress> _checkConnection(
@@ -42,32 +78,12 @@ class NetworkAnalyzer with SocketConsumer {
     Duration timeout,
   ) async {
     try {
-      await getSocket(ip, port);
+      await getSocket(ip, port, timeout: timeout);
       return NetworkAddress(ip, true);
-    } catch (e) {
+    } catch (_) {
       return NetworkAddress(ip, false);
     } finally {
       closeSocket(ip, port);
     }
-  }
-
-  void discover({int port = 9100}) async {
-    if (_isDiscovering) return;
-    _isDiscovering = true;
-    await _discoverAll(port);
-    _isDiscovering = false;
-  }
-
-  // Returns all ip addresses that needs to be checked for connection of all network interfaces
-  Future<void> _discoverAll(int port) async {
-    // get networks from all network interfaces
-    final ifs = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLinkLocal: false);
-    // map to subnet and remove duplicates
-    final ns = ifs.expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.')))).toSet();
-    // discover printers in each subnet
-    for (final n in ns) {
-      _discover(n, port, timeout: Duration(milliseconds: 500));
-    }
-    return;
   }
 }
