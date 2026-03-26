@@ -28,13 +28,7 @@ class NetworkManager {
     }
     _locks[key] = Completer<void>();
 
-    try {
-      return await _connect(consumer, host, port, timeout: timeout);
-    } catch (e) {
-      final lock = _locks.remove(key);
-      if (lock != null && !lock.isCompleted) lock.complete();
-      rethrow;
-    }
+    return await _connect(consumer, host, port, timeout: timeout);
   }
 
   Future<Socket> _connect(SocketConsumer consumer, String host, int port, {Duration? timeout}) async {
@@ -68,9 +62,9 @@ class NetworkManager {
 
       // Dead socket detection
       socket.done.then((_) {
-        _removeFromPool(key);
+        _removeFromPool(key, socket);
       }).catchError((_) {
-        _removeFromPool(key);
+        _removeFromPool(key, socket);
       });
 
       completer.complete(socket);
@@ -83,12 +77,15 @@ class NetworkManager {
     }
   }
 
-  void _removeFromPool(String key) {
-    _socketPool.remove(key);
-    _pendingConnections.remove(key);
-    _consumers.remove(key);
-    final lock = _locks.remove(key);
-    if (lock != null && !lock.isCompleted) lock.complete();
+  void _removeFromPool(String key, Socket expiredSocket) {
+    if (_socketPool[key] == expiredSocket) {
+      _socketPool.remove(key);
+      _pendingConnections.remove(key);
+      _consumers.remove(key);
+      // NOTE: We absolutely do NOT clear _locks here. 
+      // Locks belong to the active operation, not the socket. 
+      // The operation's 'finally' block will close the lock.
+    }
   }
 
   /// Removes a consumer from the list of consumers for a given socket and closes the socket if no more consumers are using it
