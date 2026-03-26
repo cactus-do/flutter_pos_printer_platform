@@ -78,12 +78,11 @@ class NetworkAnalyzer with SocketConsumer {
     Duration timeout,
   ) async {
     try {
-      await getSocket(ip, port, timeout: timeout);
-      return NetworkAddress(ip, true);
+      return await useSocket(ip, port, timeout: timeout, (socket) async {
+        return NetworkAddress(ip, true);
+      });
     } catch (_) {
       return NetworkAddress(ip, false);
-    } finally {
-      closeSocket(ip, port);
     }
   }
 }

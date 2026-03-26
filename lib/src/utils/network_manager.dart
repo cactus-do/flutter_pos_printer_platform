@@ -1,10 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_pos_printer_platform_image_3/src/utils/network_analyzer.dart';
-
-import '../../flutter_pos_printer_platform.dart';
-
 /// This class is used to manage the socket connections with all the network devices
 class NetworkManager {
   static final NetworkManager instance = NetworkManager._();
@@ -19,7 +15,7 @@ class NetworkManager {
     return '$host:$port';
   }
 
-  Future<Socket> getSocket(SocketConsumer consumer, String host, int port, {Duration? timeout}) async {
+  Future<Socket> _getSocket(SocketConsumer consumer, String host, int port, {Duration? timeout}) async {
     final key = _getMapKey(host, port);
 
     // Transparent Global Lock Queueing
@@ -89,7 +85,7 @@ class NetworkManager {
   }
 
   /// Removes a consumer from the list of consumers for a given socket and closes the socket if no more consumers are using it
-  void closeSocket(SocketConsumer consumer, String host, int port) {
+  void _closeSocket(SocketConsumer consumer, String host, int port) {
     final key = _getMapKey(host, port);
 
     final lock = _locks.remove(key);
@@ -115,80 +111,19 @@ class NetworkManager {
 }
 
 mixin SocketConsumer {
-  Future<Socket> getSocket(String host, int port, {Duration? timeout}) async {
-    return NetworkManager.instance.getSocket(this, host, port, timeout: timeout);
-  }
-
-  void closeSocket(String host, int port) {
-    NetworkManager.instance.closeSocket(this, host, port);
-  }
-}
-
-class NetworkPrinterDiscoverer with SocketConsumer {
-  static final NetworkPrinterDiscoverer instance = NetworkPrinterDiscoverer._();
-  NetworkPrinterDiscoverer._();
-
-  Future<PrinterInfo> getPrinterInfo({required String ipAddress, int port = 9100}) async {
-    // Strategy A: ESC/POS (Port 9100)
+  /// Executes the provided action with a network socket, guaranteeing the socket 
+  /// is retrieved and safely closed using the global NetworkManager lock.
+  Future<T> useSocket<T>(
+    String host, 
+    int port, 
+    FutureOr<T> Function(Socket socket) action, 
+    {Duration? timeout}
+  ) async {
     try {
-      final socket = await getSocket(ipAddress, port, timeout: Duration(seconds: 2));
-      // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
-      final serial = await _getEscPosData(socket, [0x1D, 0x49, 0x44]);
-      // Send GS I n (Transmit Printer ID) - 67 = Model (0x43)
-      final model = await _getEscPosData(socket, [0x1D, 0x49, 0x43]);
-
-      return PrinterInfo(serialNumber: serial, model: model, manufacturer: 'Unknown');
-    } catch (e) {
-      print('ESC/POS Query failed: $e');
-      return PrinterInfo();
+      final socket = await NetworkManager.instance._getSocket(this, host, port, timeout: timeout);
+      return await action(socket);
     } finally {
-      closeSocket(ipAddress, port);
+      NetworkManager.instance._closeSocket(this, host, port);
     }
-  }
-
-  Future<String?> _getEscPosData(Socket socket, List<int> bytes) async {
-    socket.add(bytes);
-
-    final completer = Completer<String?>();
-    final subscription = socket.asBroadcastStream().listen((data) {
-      try {
-        final filtered = data.where((b) => b >= 32 && b <= 126).toList();
-        if (filtered.isNotEmpty) {
-          final str = String.fromCharCodes(filtered);
-          if (!completer.isCompleted) completer.complete(str);
-        }
-      } catch (e) {
-        if (!completer.isCompleted) completer.complete(null);
-      }
-    });
-
-    final result = await completer.future.timeout(Duration(seconds: 2), onTimeout: () => null);
-    await subscription.cancel();
-    return result;
-  }
-
-  Stream<PrinterDevice> discovery({
-    String? ipAddress,
-    int port = 9100,
-    bool resolveIdentity = false,
-  }) {
-    print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
-
-    NetworkAnalyzer.instance.discover(port: port);
-    final stream = NetworkAnalyzer.instance.discoveryStream;
-
-    return stream.asyncMap((data) async {
-      print("Found device at ${data.ip}");
-      final device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);
-
-      if (resolveIdentity) {
-        final info = await getPrinterInfo(ipAddress: data.ip, port: port);
-        device.serialNumber = info.serialNumber;
-        device.model = info.model;
-        device.manufacturer = info.manufacturer;
-      }
-
-      return device;
-    });
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter_pos_printer_platform_image_3/src/utils/network_manager.dart';
+import 'package:flutter_pos_printer_platform_image_3/src/utils/network_printer_discoverer.dart';
 
 import 'printer_transport.dart';
 import 'package:flutter_pos_printer_platform_image_3/src/enums.dart';
@@ -36,17 +37,15 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
   Future<bool> connect() async {
     try {
       _stateController.add(PosPrinterConnectionState.connecting);
-      await getSocket(ipAddress, port, timeout: timeout);
-      _stateController.add(PosPrinterConnectionState.connected);
-      _statusController.add(PrinterStatus.good);
-
-      _heartbeat.start();
-      return true;
+      return await useSocket(ipAddress, port, timeout: timeout, (socket) async {
+        _stateController.add(PosPrinterConnectionState.connected);
+        _statusController.add(PrinterStatus.good);
+        _heartbeat.start();
+        return true;
+      });
     } catch (e) {
       _disconnectCleanup();
       return false;
-    } finally {
-      closeSocket(ipAddress, port);
     }
   }
 
@@ -100,15 +99,14 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
   Future<bool> write(List<int> bytes) async {
     int attempts = 0;
     const maxAttempts = 3;
-    bool result = false;
 
     while (attempts < maxAttempts) {
       try {
-        final socket = await getSocket(ipAddress, port, timeout: timeout);
-        socket.add(Uint8List.fromList(bytes));
-        await socket.flush();
-        result = true;
-        break;
+        return await useSocket(ipAddress, port, timeout: timeout, (socket) async {
+          socket.add(Uint8List.fromList(bytes));
+          await socket.flush();
+          return true;
+        });
       } catch (e) {
         attempts++;
         if (attempts >= maxAttempts) {
@@ -117,11 +115,9 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
         }
         // Wait before next attempt (busy printer)
         await Future.delayed(const Duration(seconds: 2));
-      } finally {
-        closeSocket(ipAddress, port);
       }
     }
-    return result;
+    return false;
   }
 
   /// Starts a scan for network printers.
@@ -152,14 +148,13 @@ class _Heartbeat with SocketConsumer {
     stop();
     _heartbeatTimer = Timer.periodic(Duration(seconds: 30), (timer) async {
       try {
-        final socket = await getSocket(_transport.ipAddress, _transport.port, timeout: _transport.timeout);
-        socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
-        await socket.flush();
+        await useSocket(_transport.ipAddress, _transport.port, timeout: _transport.timeout, (socket) async {
+          socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
+          await socket.flush();
+        });
       } catch (e) {
         stop();
         _transport._disconnectCleanup();
-      } finally {
-        closeSocket(_transport.ipAddress, _transport.port);
       }
     });
   }
