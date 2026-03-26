@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 /// This class is used to manage the socket connections with all the network devices
-class NetworkManager {
-  static final NetworkManager instance = NetworkManager._();
-  NetworkManager._();
+class _NetworkManager {
+  static final _NetworkManager _instance = _NetworkManager._();
+  _NetworkManager._();
 
   final Map<String, Socket> _socketPool = {};
   final Map<String, Future<Socket>> _pendingConnections = {};
@@ -120,10 +120,10 @@ mixin SocketConsumer {
     {Duration? timeout}
   ) async {
     try {
-      final socket = await NetworkManager.instance._getSocket(this, host, port, timeout: timeout);
+      final socket = await _NetworkManager._instance._getSocket(this, host, port, timeout: timeout);
       return await action(socket);
     } finally {
-      NetworkManager.instance._closeSocket(this, host, port);
+      _NetworkManager._instance._closeSocket(this, host, port);
     }
   }
 }
