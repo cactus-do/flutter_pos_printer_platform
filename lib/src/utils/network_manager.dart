@@ -121,7 +121,9 @@ mixin SocketConsumer {
   ) async {
     try {
       final socket = await _NetworkManager._instance._getSocket(this, host, port, timeout: timeout);
-      return await action(socket);
+      // Ensure the action itself doesn't hang forever (e.g. socket.flush on a full OS buffer)
+      // We set a 15 second upper bound for any single printer operation.
+      return await Future.value(action(socket)).timeout(const Duration(seconds: 15));
     } finally {
       _NetworkManager._instance._closeSocket(this, host, port);
     }
