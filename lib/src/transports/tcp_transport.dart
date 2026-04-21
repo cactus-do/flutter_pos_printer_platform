@@ -44,7 +44,8 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
         return true;
       });
     } catch (e) {
-      _disconnectCleanup();
+      _stateController.add(PosPrinterConnectionState.disconnected);
+      _statusController.add(PrinterStatus.unknown);
       return false;
     }
   }
@@ -84,16 +85,13 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
   @override
   Future<bool> disconnect() async {
     _heartbeat.stop();
-    _disconnectCleanup();
+    _stateController.add(PosPrinterConnectionState.disconnected);
+    _statusController.add(PrinterStatus.unknown);
     // Demand-based connections are automatically closed by their consumers.
     // Unconditionally calling closeSocket here would corrupt active locks.
     return true;
   }
 
-  void _disconnectCleanup() {
-    _stateController.add(PosPrinterConnectionState.disconnected);
-    _statusController.add(PrinterStatus.unknown);
-  }
 
   @override
   Future<bool> write(List<int> bytes) async {
@@ -110,7 +108,8 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
       } catch (e) {
         attempts++;
         if (attempts >= maxAttempts) {
-          _disconnectCleanup();
+          _stateController.add(PosPrinterConnectionState.disconnected);
+          _statusController.add(PrinterStatus.unknown);
           break;
         }
         // Wait before next attempt (busy printer)
@@ -152,9 +151,11 @@ class _Heartbeat with SocketConsumer {
           socket.add(Uint8List.fromList([0x10, 0x04, 0x04]));
           await socket.flush();
         });
+        _transport._stateController.add(PosPrinterConnectionState.connected);
+        _transport._statusController.add(PrinterStatus.good);
       } catch (e) {
-        stop();
-        _transport._disconnectCleanup();
+        _transport._stateController.add(PosPrinterConnectionState.disconnected);
+        _transport._statusController.add(PrinterStatus.unknown);
       }
     });
   }
