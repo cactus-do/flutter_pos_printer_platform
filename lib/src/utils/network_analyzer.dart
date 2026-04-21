@@ -12,71 +12,54 @@ class NetworkAnalyzer with SocketConsumer {
   static final NetworkAnalyzer instance = NetworkAnalyzer._();
   NetworkAnalyzer._();
 
-  StreamController<NetworkAddress> _discoveryController = StreamController<NetworkAddress>.broadcast();
-
-  Stream<NetworkAddress> get discoveryStream => _discoveryController.stream;
-
   bool _isDiscovering = false;
 
-  Future<void> discover({int port = 9100}) async {
+  /// Scans the local network for devices listening on [port].
+  /// Returns a stream that emits each found [NetworkAddress] and closes when done.
+  Stream<NetworkAddress> discover({int port = 9100}) async* {
     if (_isDiscovering) return;
 
     _isDiscovering = true;
-    _discoveryController = StreamController<NetworkAddress>.broadcast();
+    try {
+      final ifs = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: false,
+      );
 
-    await _discoverAll(port);
+      final subnets = ifs
+          .expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.'))))
+          .toSet();
 
-    await _discoveryController.close();
-    _isDiscovering = false;
-  }
-
-  Future<void> _discoverAll(int port) async {
-    final ifs = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLinkLocal: false,
-    );
-
-    final subnets =
-        ifs.expand((e) => e.addresses.map((ip) => ip.address.substring(0, ip.address.lastIndexOf('.')))).toSet();
-
-    final ips = <String>[];
-
-    for (final subnet in subnets) {
-      for (int i = 1; i < 256; i++) {
-        ips.add('$subnet.$i');
+      final ips = <String>[];
+      for (final subnet in subnets) {
+        for (int i = 1; i < 256; i++) {
+          ips.add('$subnet.$i');
+        }
       }
-    }
 
-    await _scanIps(ips, port);
+      yield* _scanIps(ips, port);
+    } finally {
+      _isDiscovering = false;
+    }
   }
 
-  Future<void> _scanIps(List<String> ips, int port) async {
+  Stream<NetworkAddress> _scanIps(List<String> ips, int port) async* {
     const batchSize = 30;
 
     for (int i = 0; i < ips.length; i += batchSize) {
-      final batch = ips.skip(i).take(batchSize);
+      final batch = ips.skip(i).take(batchSize).toList();
 
-      await Future.wait(
-        batch.map((ip) async {
-          final result = await _checkConnection(
-            ip,
-            port,
-            const Duration(milliseconds: 500),
-          );
-
-          if (result.exists) {
-            _discoveryController.add(result);
-          }
-        }),
+      final results = await Future.wait(
+        batch.map((ip) => _checkConnection(ip, port, const Duration(milliseconds: 500))),
       );
+
+      for (final result in results) {
+        if (result.exists) yield result;
+      }
     }
   }
 
-  Future<NetworkAddress> _checkConnection(
-    String ip,
-    int port,
-    Duration timeout,
-  ) async {
+  Future<NetworkAddress> _checkConnection(String ip, int port, Duration timeout) async {
     try {
       return await useSocket(ip, port, timeout: timeout, (socket) async {
         return NetworkAddress(ip, true);

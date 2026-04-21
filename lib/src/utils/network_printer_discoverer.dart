@@ -12,10 +12,14 @@ class NetworkPrinterDiscoverer with SocketConsumer {
     // Strategy A: ESC/POS (Port 9100)
     try {
       return await useSocket(ipAddress, port, timeout: const Duration(seconds: 2), (socket) async {
+        // We need a single broadcast listener for the socket for the duration
+        // of the identity query, to avoid missing bytes between queries.
+        final broadcastSocket = socket.asBroadcastStream();
+
         // Send GS I n (Transmit Printer ID) - 68 = Serial Number (0x44)
-        final serial = await _getEscPosData(socket, [0x1D, 0x49, 0x44]);
+        final serial = await _getEscPosData(socket, broadcastSocket, [0x1D, 0x49, 0x44]);
         // Send GS I n (Transmit Printer ID) - 67 = Model (0x43)
-        final model = await _getEscPosData(socket, [0x1D, 0x49, 0x43]);
+        final model = await _getEscPosData(socket, broadcastSocket, [0x1D, 0x49, 0x43]);
 
         return PrinterInfo(serialNumber: serial, model: model, manufacturer: 'Unknown');
       });
@@ -25,11 +29,11 @@ class NetworkPrinterDiscoverer with SocketConsumer {
     }
   }
 
-  Future<String?> _getEscPosData(Socket socket, List<int> bytes) async {
+  Future<String?> _getEscPosData(Socket socket, Stream<List<int>> broadcastSocket, List<int> bytes) async {
     socket.add(bytes);
 
     final completer = Completer<String?>();
-    final subscription = socket.asBroadcastStream().listen((data) {
+    final subscription = broadcastSocket.listen((data) {
       try {
         final filtered = data.where((b) => b >= 32 && b <= 126).toList();
         if (filtered.isNotEmpty) {
@@ -41,22 +45,20 @@ class NetworkPrinterDiscoverer with SocketConsumer {
       }
     });
 
-    final result = await completer.future.timeout(Duration(seconds: 2), onTimeout: () => null);
+    final result = await completer.future.timeout(const Duration(seconds: 2), onTimeout: () => null);
     await subscription.cancel();
     return result;
   }
 
+  /// Returns a stream of discovered printer devices on the local network.
   Stream<PrinterDevice> discovery({
     String? ipAddress,
     int port = 9100,
     bool resolveIdentity = false,
-  }) {
+  }) async* {
     print("Starting network discovery (TCP) on port $port (resolveIdentity: $resolveIdentity)");
 
-    NetworkAnalyzer.instance.discover(port: port);
-    final stream = NetworkAnalyzer.instance.discoveryStream;
-
-    return stream.asyncMap((data) async {
+    await for (final data in NetworkAnalyzer.instance.discover(port: port)) {
       print("Found device at ${data.ip}");
       final device = PrinterDevice(name: "${data.ip}:$port", address: data.ip);
 
@@ -67,7 +69,9 @@ class NetworkPrinterDiscoverer with SocketConsumer {
         device.manufacturer = info.manufacturer;
       }
 
-      return device;
-    });
+      yield device;
+    }
+
+    print("Network discovery finished.");
   }
 }
