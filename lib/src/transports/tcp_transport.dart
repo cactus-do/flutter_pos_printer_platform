@@ -40,7 +40,7 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
       return await useSocket(ipAddress, port, timeout: timeout, (socket) async {
         _stateController.add(PosPrinterConnectionState.connected);
         _statusController.add(PrinterStatus.good);
-        _heartbeat.start();
+        _heartbeat.open();
         return true;
       });
     } catch (e) {
@@ -84,7 +84,7 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
 
   @override
   Future<bool> disconnect() async {
-    _heartbeat.stop();
+    _heartbeat.close();
     _stateController.add(PosPrinterConnectionState.disconnected);
     _statusController.add(PrinterStatus.unknown);
     // Demand-based connections are automatically closed by their consumers.
@@ -103,6 +103,9 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
         return await useSocket(ipAddress, port, timeout: timeout, (socket) async {
           socket.add(Uint8List.fromList(bytes));
           await socket.flush();
+          _stateController.add(PosPrinterConnectionState.connected);
+          _statusController.add(PrinterStatus.good);
+          _heartbeat.start();
           return true;
         });
       } catch (e) {
@@ -133,10 +136,21 @@ class TcpTransport extends PrinterTransport with SocketConsumer {
 
 class _Heartbeat with SocketConsumer {
   final TcpTransport _transport;
+  bool _closed = false;
 
   _Heartbeat({required TcpTransport transport}) : _transport = transport;
 
   Timer? _heartbeatTimer;
+
+  void close(){
+    _closed = true;
+    stop();
+  }
+
+  void open(){
+    _closed = false;
+    start();
+  }
 
   void stop() {
     _heartbeatTimer?.cancel();
@@ -144,6 +158,7 @@ class _Heartbeat with SocketConsumer {
   }
 
   void start() {
+    if (_closed) return;
     stop();
     _heartbeatTimer = Timer.periodic(Duration(seconds: 30), (timer) async {
       try {
