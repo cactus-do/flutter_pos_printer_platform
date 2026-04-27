@@ -22,15 +22,22 @@ class UsbReceiver(private val manager: UsbPrinterManager? = null) : BroadcastRec
                 Log.d("UsbReceiver", "USB Device attached: ${usbDevice.deviceName}")
                 manager?.onUsbAttached(usbDevice)
 
-                val intentPermission = Intent("com.flutter_pos_printer.USB_PERMISSION")
-                intentPermission.setPackage(context?.packageName)
-                val mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                } else {
-                    PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_UPDATE_CURRENT)
-                }
                 val mUSBManager = context?.getSystemService(Context.USB_SERVICE) as UsbManager?
-                mUSBManager?.requestPermission(usbDevice, mPermissionIndent)
+
+                if (mUSBManager?.hasPermission(usbDevice) == true) {
+                    // Device was already approved by the user in a previous session — no dialog needed
+                    Log.d("UsbReceiver", "USB Device already has permission: ${usbDevice.deviceName}")
+                    UsbPermissionManager.handlePermissionResult(usbDevice.deviceName, true)
+                } else {
+                    val intentPermission = Intent("com.flutter_pos_printer.USB_PERMISSION")
+                    intentPermission.setPackage(context?.packageName)
+                    val mPermissionIndent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                    } else {
+                        PendingIntent.getBroadcast(context, 0, intentPermission, PendingIntent.FLAG_UPDATE_CURRENT)
+                    }
+                    mUSBManager?.requestPermission(usbDevice, mPermissionIndent)
+                }
             }
 
             UsbManager.ACTION_USB_DEVICE_DETACHED -> {
